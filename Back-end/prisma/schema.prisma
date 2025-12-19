@@ -1,0 +1,119 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum ClassStatus {
+  SCHEDULED
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  phone     String?
+  role      UserRole @default(STUDENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  classesAsTeacher Class[]
+  bookings         Booking[]
+  payments         Payment[]
+
+  @@map("users")
+}
+
+model Class {
+  id          String      @id @default(cuid())
+  title       String
+  description String?
+  subject     String?
+  startTime   String      // Format: "HH:mm"
+  endTime     String      // Format: "HH:mm"
+  date        DateTime    // Class date
+  room        String?
+  location    String?
+  capacity    Int         @default(20)
+  price       Float       @default(0.0)
+  status      ClassStatus @default(SCHEDULED)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  teacherId String
+  teacher   User     @relation(fields: [teacherId], references: [id])
+  bookings  Booking[]
+
+  @@map("classes")
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  status        BookingStatus @default(PENDING)
+  bookingDate   DateTime      @default(now())
+  expiresAt     DateTime?     // For payment timeout
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  studentId String
+  student   User    @relation(fields: [studentId], references: [id])
+  classId   String
+  class     Class   @relation(fields: [classId], references: [id])
+  payment   Payment?
+
+  @@unique([studentId, classId])
+  @@map("bookings")
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  amount        Float
+  status        PaymentStatus @default(PENDING)
+  paymentMethod String?       // e.g., "credit_card", "debit_card"
+  transactionId String?       // External payment gateway transaction ID
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+
+  @@map("payments")
+}
+

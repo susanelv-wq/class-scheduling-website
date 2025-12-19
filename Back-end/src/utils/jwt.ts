@@ -1,0 +1,21 @@
+import jwt from "jsonwebtoken"
+
+interface TokenPayload {
+  id: string
+  email: string
+  role: string
+}
+
+export const generateToken = (payload: TokenPayload): string => {
+  return jwt.sign(payload, process.env.JWT_SECRET || "fallback-secret", {
+    expiresIn: process.env.JWT_EXPIRE || "7d",
+  })
+}
+
+export const verifyToken = (token: string): TokenPayload => {
+  return jwt.verify(
+    token,
+    process.env.JWT_SECRET || "fallback-secret"
+  ) as TokenPayload
+}
+
