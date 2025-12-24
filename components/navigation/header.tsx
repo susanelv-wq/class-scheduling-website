@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
+import { useAuth } from "@/lib/auth-context"
 
 interface HeaderProps {
   userRole: "student" | "teacher" | "admin"
@@ -12,9 +13,10 @@ interface HeaderProps {
 export function Header({ userRole, userName }: HeaderProps) {
   const router = useRouter()
   const pathname = usePathname()
+  const { logout } = useAuth()
 
   const handleLogout = () => {
-    router.push("/")
+    logout()
   }
 
   const getRoleLabel = () => {

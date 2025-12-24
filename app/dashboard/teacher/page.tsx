@@ -1,84 +1,81 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { LayoutWrapper } from "@/components/navigation/layout-wrapper"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { Users, Clock, TrendingUp } from "lucide-react"
-
-const mockTeacherClasses = [
-  {
-    id: 1,
-    title: "Advanced JavaScript",
-    startTime: "10:00",
-    endTime: "11:30",
-    date: "2025-12-12",
-    details: {
-      room: "Room 101",
-      location: "Building A",
-      enrolled: 15,
-      capacity: 20,
-      status: "scheduled",
-    },
-    color: "primary",
-  },
-  {
-    id: 2,
-    title: "Web Development Workshop",
-    startTime: "14:00",
-    endTime: "15:30",
-    date: "2025-12-12",
-    details: {
-      room: "Room 102",
-      location: "Building A",
-      enrolled: 8,
-      capacity: 15,
-      status: "scheduled",
-    },
-    color: "primary",
-  },
-  {
-    id: 3,
-    title: "React Deep Dive",
-    startTime: "11:00",
-    endTime: "12:30",
-    date: "2025-12-13",
-    details: {
-      room: "Room 105",
-      location: "Building B",
-      enrolled: 12,
-      capacity: 18,
-      status: "scheduled",
-    },
-    color: "primary",
-  },
-  {
-    id: 4,
-    title: "JavaScript Fundamentals",
-    startTime: "15:00",
-    endTime: "16:30",
-    date: "2025-12-14",
-    details: {
-      room: "Room 101",
-      location: "Building A",
-      enrolled: 20,
-      capacity: 20,
-      status: "full",
-    },
-    color: "destructive",
-  },
-]
+import { useAuth } from "@/lib/auth-context"
+import { classesApi, type Class } from "@/lib/api"
 
 export default function TeacherDashboard() {
-  const [selectedClass, setSelectedClass] = useState<(typeof mockTeacherClasses)[0] | null>(null)
+  const [classes, setClasses] = useState<Class[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedClass, setSelectedClass] = useState<any>(null)
+  const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const router = useRouter()
 
-  const totalEnrolled = mockTeacherClasses.reduce((sum, cls) => sum + cls.details.enrolled, 0)
-  const totalCapacity = mockTeacherClasses.reduce((sum, cls) => sum + cls.details.capacity, 0)
-  const occupancyRate = Math.round((totalEnrolled / totalCapacity) * 100)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push("/")
+      return
+    }
+  }, [authLoading, isAuthenticated, router])
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        if (user?.id) {
+          const data = await classesApi.getAll({ teacherId: user.id })
+          setClasses(data)
+        }
+      } catch (error) {
+        console.error("Failed to fetch classes:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (isAuthenticated && user?.id) {
+      fetchClasses()
+    }
+  }, [isAuthenticated, user?.id])
+
+  // Convert classes to time slot format
+  const teacherClasses = classes.map((cls) => ({
+    id: cls.id,
+    title: cls.title,
+    startTime: cls.startTime,
+    endTime: cls.endTime,
+    date: new Date(cls.date).toISOString().split("T")[0],
+    details: {
+      room: cls.room || "",
+      location: cls.location || "",
+      enrolled: cls.enrolled || 0,
+      capacity: cls.capacity,
+      status: cls.status.toLowerCase(),
+    },
+    color: (cls.enrolled || 0) >= cls.capacity ? "destructive" : "primary",
+  }))
+
+  const totalEnrolled = classes.reduce((sum, cls) => sum + (cls.enrolled || 0), 0)
+  const totalCapacity = classes.reduce((sum, cls) => sum + cls.capacity, 0)
+  const occupancyRate = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0
+
+  if (authLoading || loading) {
+    return (
+      <LayoutWrapper userRole="teacher" userName={user?.name || "Teacher"}>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <p className="text-muted-foreground">Loading schedule...</p>
+        </div>
+      </LayoutWrapper>
+    )
+  }
 
   return (
-    <LayoutWrapper userRole="teacher" userName="John Smith">
+    <LayoutWrapper userRole="teacher" userName={user?.name || "Teacher"}>
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">My Teaching Schedule</h1>
@@ -91,7 +88,7 @@ export default function TeacherDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Classes</p>
-                <p className="text-3xl font-bold text-foreground mt-2">{mockTeacherClasses.length}</p>
+                <p className="text-3xl font-bold text-foreground mt-2">{classes.length}</p>
               </div>
               <Clock className="w-10 h-10 text-primary opacity-20" />
             </div>
@@ -120,12 +117,18 @@ export default function TeacherDashboard() {
 
         {/* Weekly Calendar View */}
         <Card className="p-6">
-          <WeeklyCalendar
-            slots={mockTeacherClasses}
-            onSelectSlot={(slot) => setSelectedClass(slot)}
-            startHour={8}
-            endHour={18}
-          />
+          {teacherClasses.length > 0 ? (
+            <WeeklyCalendar
+              slots={teacherClasses}
+              onSelectSlot={(slot) => setSelectedClass(slot)}
+              startHour={8}
+              endHour={18}
+            />
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <p>No classes scheduled yet.</p>
+            </div>
+          )}
         </Card>
 
         {/* Class Details Sidebar */}

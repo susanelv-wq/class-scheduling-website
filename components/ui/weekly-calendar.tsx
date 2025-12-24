@@ -18,15 +18,24 @@ interface TimeSlot {
 interface WeeklyCalendarProps {
   slots: TimeSlot[]
   onSelectSlot: (slot: TimeSlot) => void
+  onSelectEmptySlot?: (date: string, time: string) => void // For creating new slots
   startHour?: number // Default: 8
   endHour?: number // Default: 18
+  editable?: boolean // Allow clicking empty slots
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-export function WeeklyCalendar({ slots, onSelectSlot, startHour = 8, endHour = 18 }: WeeklyCalendarProps) {
+export function WeeklyCalendar({
+  slots,
+  onSelectSlot,
+  onSelectEmptySlot,
+  startHour = 8,
+  endHour = 18,
+  editable = false,
+}: WeeklyCalendarProps) {
   const [currentWeek, setCurrentWeek] = useState(new Date(2025, 11, 8))
 
   const getWeekDays = () => {
@@ -155,18 +164,29 @@ export function WeeklyCalendar({ slots, onSelectSlot, startHour = 8, endHour = 1
 
                   {/* Time slots background and events */}
                   <div className="relative">
-                    {/* Hour divisions */}
+                    {/* Hour divisions - clickable if editable */}
                     {visibleHours.map((hour) => (
-                      <div key={hour} className="h-24 border-b border-border/50" />
+                      <div
+                        key={hour}
+                        className={`h-24 border-b border-border/50 ${editable ? "hover:bg-primary/5 cursor-pointer" : ""}`}
+                        onClick={
+                          editable && onSelectEmptySlot
+                            ? () => {
+                                const timeString = `${String(hour).padStart(2, "0")}:00`
+                                onSelectEmptySlot(dayString, timeString)
+                              }
+                            : undefined
+                        }
+                      />
                     ))}
 
                     {/* Event slots */}
-                    <div className="absolute inset-0 top-0 w-full">
+                    <div className="absolute inset-0 top-0 w-full pointer-events-none">
                       {daySlots.map((slot) => (
                         <div
                           key={slot.id}
                           style={getSlotStyle(slot, 100)}
-                          className={`absolute left-1 right-1 border-l-4 rounded-md p-2 cursor-pointer transition-shadow hover:shadow-md ${getColorClass(
+                          className={`absolute left-1 right-1 border-l-4 rounded-md p-2 cursor-pointer transition-shadow hover:shadow-md pointer-events-auto ${getColorClass(
                             slot.color,
                           )}`}
                           onClick={() => onSelectSlot(slot)}

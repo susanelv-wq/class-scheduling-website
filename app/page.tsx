@@ -3,29 +3,33 @@
 import type React from "react"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/lib/auth-context"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [userRole, setUserRole] = useState<"student" | "teacher" | "admin" | null>(null)
+  const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const { login } = useAuth()
+  const router = useRouter()
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError("")
     setIsLoading(true)
-    // Simulate login - replace with actual auth logic
-    setTimeout(() => {
-      if (userRole === "student") {
-        window.location.href = "/dashboard/student"
-      } else if (userRole === "teacher") {
-        window.location.href = "/dashboard/teacher"
-      } else if (userRole === "admin") {
-        window.location.href = "/dashboard/admin"
-      }
-    }, 800)
+
+    try {
+      await login(email, password)
+      // Navigation is handled by AuthProvider after successful login
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -72,29 +76,15 @@ export default function LoginPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-3">I am a:</label>
-              <div className="space-y-2">
-                {(["student", "teacher", "admin"] as const).map((role) => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => setUserRole(role)}
-                    className={`w-full p-3 text-sm font-medium rounded-lg border-2 transition-all ${
-                      userRole === role
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border bg-background text-foreground hover:border-primary"
-                    }`}
-                  >
-                    {role.charAt(0).toUpperCase() + role.slice(1)}
-                  </button>
-                ))}
+            {error && (
+              <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg">
+                {error}
               </div>
-            </div>
+            )}
 
             <Button
               type="submit"
-              disabled={!userRole || !email || !password || isLoading}
+              disabled={!email || !password || isLoading}
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2"
             >
               {isLoading ? "Logging in..." : "Login"}
@@ -102,9 +92,14 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-6 pt-6 border-t border-border">
-            <p className="text-sm text-muted-foreground text-center">
-              Demo credentials: email: demo@example.com | password: demo123
+            <p className="text-sm text-muted-foreground text-center mb-2">
+              Demo credentials:
             </p>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p>Admin: admin@example.com / admin123</p>
+              <p>Teacher: teacher1@example.com / teacher123</p>
+              <p>Student: student1@example.com / student123</p>
+            </div>
           </div>
         </Card>
       </div>

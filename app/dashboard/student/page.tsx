@@ -1,96 +1,81 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { LayoutWrapper } from "@/components/navigation/layout-wrapper"
 import { Card } from "@/components/ui/card"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { ClassDetailsModal } from "@/components/student/class-details-modal"
-
-// Mock data - converted to time slot format
-const mockTimeSlots = [
-  {
-    id: 1,
-    title: "Advanced JavaScript",
-    startTime: "10:00",
-    endTime: "11:30",
-    date: "2025-12-12",
-    details: {
-      teacher: "John Smith",
-      subject: "Programming",
-      room: "Room 101",
-      location: "Building A",
-      price: 49.99,
-      capacity: 20,
-      enrolled: 15,
-      description: "Deep dive into advanced JavaScript concepts including async/await, closures, and more.",
-    },
-    color: "primary",
-  },
-  {
-    id: 2,
-    title: "Web Design Basics",
-    startTime: "14:00",
-    endTime: "15:30",
-    date: "2025-12-12",
-    details: {
-      teacher: "Sarah Johnson",
-      subject: "Design",
-      room: "Room 205",
-      location: "Building B",
-      price: 39.99,
-      capacity: 25,
-      enrolled: 20,
-      description: "Learn the fundamentals of web design including color theory, layout, and UX principles.",
-    },
-    color: "primary",
-  },
-  {
-    id: 3,
-    title: "React Development",
-    startTime: "11:00",
-    endTime: "12:30",
-    date: "2025-12-13",
-    details: {
-      teacher: "Mike Chen",
-      subject: "Programming",
-      room: "Room 102",
-      location: "Building A",
-      price: 59.99,
-      capacity: 18,
-      enrolled: 12,
-      description: "Master React from basics to advanced patterns including hooks and state management.",
-    },
-    color: "primary",
-  },
-  {
-    id: 4,
-    title: "UI/UX Workshop",
-    startTime: "15:00",
-    endTime: "16:30",
-    date: "2025-12-13",
-    details: {
-      teacher: "Emma Davis",
-      subject: "Design",
-      room: "Room 301",
-      location: "Building C",
-      price: 44.99,
-      capacity: 15,
-      enrolled: 8,
-      description: "Interactive workshop on modern UI/UX design practices and tools.",
-    },
-    color: "accent",
-  },
-]
+import { useAuth } from "@/lib/auth-context"
+import { classesApi, type Class } from "@/lib/api"
 
 export default function StudentDashboard() {
-  const [selectedSlot, setSelectedSlot] = useState<(typeof mockTimeSlots)[0] | null>(null)
+  const [classes, setClasses] = useState<Class[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedSlot, setSelectedSlot] = useState<any>(null)
+  const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push("/")
+      return
+    }
+  }, [authLoading, isAuthenticated, router])
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        const data = await classesApi.getAll()
+        setClasses(data)
+      } catch (error) {
+        console.error("Failed to fetch classes:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (isAuthenticated) {
+      fetchClasses()
+    }
+  }, [isAuthenticated])
+
+  // Convert classes to time slot format for WeeklyCalendar
+  const timeSlots = classes.map((cls) => ({
+    id: cls.id,
+    title: cls.title,
+    startTime: cls.startTime,
+    endTime: cls.endTime,
+    date: new Date(cls.date).toISOString().split("T")[0],
+    details: {
+      teacher: cls.teacher?.name || "Unknown",
+      subject: cls.subject || "",
+      room: cls.room || "",
+      location: cls.location || "",
+      price: cls.price,
+      capacity: cls.capacity,
+      enrolled: cls.enrolled || 0,
+      description: cls.description || "",
+    },
+    color: (cls.enrolled || 0) >= cls.capacity ? "destructive" : "primary",
+  }))
 
   const handleSelectSlot = (slot: any) => {
     setSelectedSlot(slot)
   }
 
+  if (authLoading || loading) {
+    return (
+      <LayoutWrapper userRole="student" userName={user?.name || "Student"}>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <p className="text-muted-foreground">Loading classes...</p>
+        </div>
+      </LayoutWrapper>
+    )
+  }
+
   return (
-    <LayoutWrapper userRole="student" userName="Alice Student">
+    <LayoutWrapper userRole="student" userName={user?.name || "Student"}>
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Available Classes</h1>
@@ -98,7 +83,13 @@ export default function StudentDashboard() {
         </div>
 
         <Card className="p-6">
-          <WeeklyCalendar slots={mockTimeSlots} onSelectSlot={handleSelectSlot} startHour={8} endHour={18} />
+          {timeSlots.length > 0 ? (
+            <WeeklyCalendar slots={timeSlots} onSelectSlot={handleSelectSlot} startHour={8} endHour={18} />
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <p>No classes available at the moment.</p>
+            </div>
+          )}
         </Card>
 
         <Card className="p-6 bg-secondary/50">

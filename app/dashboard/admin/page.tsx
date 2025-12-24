@@ -1,13 +1,17 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { LayoutWrapper } from "@/components/navigation/layout-wrapper"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
-import { Users, Clock, DollarSign, AlertCircle, CheckCircle } from "lucide-react"
+import { Users, Clock, DollarSign, AlertCircle, CheckCircle, UserPlus } from "lucide-react"
+import { useAuth } from "@/lib/auth-context"
+import { classesApi, usersApi, type Class, type User } from "@/lib/api"
+import { CreateUserModal } from "@/components/admin/create-user-modal"
 
-// Mock data for all classes and bookings
+// Mock data for all classes and bookings (will be replaced with real data)
 const mockAllClasses = [
   {
     id: 1,
@@ -89,11 +93,54 @@ const mockUsers = [
 
 export default function AdminDashboard() {
   const [selectedClass, setSelectedClass] = useState<(typeof mockAllClasses)[0] | null>(null)
-  const [filterRole, setFilterRole] = useState<"all" | "student" | "teacher">("all")
+  const [filterRole, setFilterRole] = useState<"all" | "STUDENT" | "TEACHER">("all")
+  const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push("/")
+      return
+    }
+  }, [authLoading, isAuthenticated, router])
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const roleFilter = filterRole === "all" ? undefined : filterRole
+        const data = await usersApi.getAll({ role: roleFilter })
+        setUsers(data)
+      } catch (error) {
+        console.error("Failed to fetch users:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (isAuthenticated) {
+      fetchUsers()
+    }
+  }, [isAuthenticated, filterRole])
+
+  const handleUserCreated = () => {
+    // Refresh users list
+    const fetchUsers = async () => {
+      try {
+        const roleFilter = filterRole === "all" ? undefined : filterRole
+        const data = await usersApi.getAll({ role: roleFilter })
+        setUsers(data)
+      } catch (error) {
+        console.error("Failed to fetch users:", error)
+      }
+    }
+    fetchUsers()
+  }
 
   const getFilteredUsers = () => {
-    if (filterRole === "all") return mockUsers
-    return mockUsers.filter((u) => u.role === filterRole)
+    return users
   }
 
   const filteredUsers = getFilteredUsers()
@@ -101,8 +148,18 @@ export default function AdminDashboard() {
   const totalEnrolled = mockAllClasses.reduce((sum, cls) => sum + cls.details.enrolled, 0)
   const pendingBookings = mockAllClasses.filter((cls) => cls.details.status === "pending").length
 
+  if (authLoading) {
+    return (
+      <LayoutWrapper userRole="admin" userName={user?.name || "Admin"}>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </LayoutWrapper>
+    )
+  }
+
   return (
-    <LayoutWrapper userRole="admin" userName="Admin Manager">
+    <LayoutWrapper userRole="admin" userName={user?.name || "Admin"}>
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Admin Dashboard</h1>
@@ -217,7 +274,15 @@ export default function AdminDashboard() {
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold text-foreground">User Management</h2>
               <div className="flex gap-2">
-                {(["all", "student", "teacher"] as const).map((role) => (
+                <Button
+                  onClick={() => setShowCreateModal(true)}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                  size="sm"
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create User
+                </Button>
+                {(["all", "STUDENT", "TEACHER"] as const).map((role) => (
                   <Button
                     key={role}
                     variant={filterRole === role ? "default" : "ghost"}
@@ -225,56 +290,67 @@ export default function AdminDashboard() {
                     onClick={() => setFilterRole(role)}
                     className={filterRole === role ? "bg-primary text-primary-foreground" : ""}
                   >
-                    {role === "all" ? "All" : role === "student" ? "Students" : "Teachers"}
+                    {role === "all" ? "All" : role === "STUDENT" ? "Students" : "Teachers"}
                   </Button>
                 ))}
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Name</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Email</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Role</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Bookings</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Status</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredUsers.map((user) => (
-                    <tr key={user.id} className="border-b border-border hover:bg-secondary/50 transition-colors">
-                      <td className="py-3 px-4 text-foreground font-medium">{user.name}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{user.email}</td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-1 bg-secondary rounded text-xs font-medium text-foreground capitalize">
-                          {user.role}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-foreground">{user.bookings}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            user.status === "active"
-                              ? "bg-green-500/10 text-green-600"
-                              : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          {user.status === "active" ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Button variant="ghost" size="sm" className="text-xs">
-                          Edit
-                        </Button>
-                      </td>
+            {loading ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>Loading users...</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Name</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Email</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Phone</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Role</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Created</th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                          No users found
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map((userItem) => (
+                        <tr
+                          key={userItem.id}
+                          className="border-b border-border hover:bg-secondary/50 transition-colors"
+                        >
+                          <td className="py-3 px-4 text-foreground font-medium">{userItem.name}</td>
+                          <td className="py-3 px-4 text-muted-foreground">{userItem.email}</td>
+                          <td className="py-3 px-4 text-muted-foreground">{userItem.phone || "-"}</td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-1 bg-secondary rounded text-xs font-medium text-foreground capitalize">
+                              {userItem.role.toLowerCase()}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-muted-foreground text-xs">
+                            {userItem.createdAt
+                              ? new Date(userItem.createdAt).toLocaleDateString()
+                              : "-"}
+                          </td>
+                          <td className="py-3 px-4">
+                            <Button variant="ghost" size="sm" className="text-xs">
+                              Edit
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -354,6 +430,13 @@ export default function AdminDashboard() {
               </Button>
             </div>
           </Card>
+        )}
+
+        {showCreateModal && (
+          <CreateUserModal
+            onClose={() => setShowCreateModal(false)}
+            onSuccess={handleUserCreated}
+          />
         )}
       </div>
     </LayoutWrapper>

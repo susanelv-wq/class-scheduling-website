@@ -4,6 +4,72 @@ import { prisma } from "../utils/prisma"
 import { AuthRequest } from "../middleware/auth"
 import bcrypt from "bcryptjs"
 
+export const createUser = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userRole = req.user?.role
+
+    if (userRole !== "ADMIN") {
+      throw new AppError("Only admins can create users", 403)
+    }
+
+    const { email, password, name, phone, role } = req.body
+
+    // Validation
+    if (!email || !password || !name || !role) {
+      throw new AppError("Email, password, name, and role are required", 400)
+    }
+
+    // Validate role
+    if (!["STUDENT", "TEACHER", "ADMIN"].includes(role)) {
+      throw new AppError("Invalid role. Must be STUDENT, TEACHER, or ADMIN", 400)
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    })
+
+    if (existingUser) {
+      throw new AppError("User with this email already exists", 409)
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10)
+
+    // Create user
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        name,
+        phone,
+        role,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      data: user,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
 export const getAllUsers = async (
   req: AuthRequest,
   res: Response,
