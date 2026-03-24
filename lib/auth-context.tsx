@@ -2,14 +2,15 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react"
 import { useRouter } from "next/navigation"
-import { authApi, getAuthToken, setAuthToken, removeAuthToken, type User } from "./api"
+import { authApi, type User } from "./api"
+import { hasSupabaseEnv, supabase } from "./supabase"
 
 interface AuthContextType {
   user: User | null
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string, name: string, phone?: string, role?: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   isAuthenticated: boolean
 }
 
@@ -22,15 +23,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Check if user is authenticated on mount
   useEffect(() => {
+    if (!hasSupabaseEnv) {
+      setLoading(false)
+      return
+    }
+
     const checkAuth = async () => {
-      const token = getAuthToken()
-      if (token) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (session) {
         try {
           const userData = await authApi.getMe()
           setUser(userData)
         } catch (error) {
-          // Token is invalid, remove it
-          removeAuthToken()
+          await supabase.auth.signOut()
           setUser(null)
         }
       }
@@ -38,12 +46,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     checkAuth()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        setUser(null)
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
   const login = async (email: string, password: string) => {
     try {
       const response = await authApi.login(email, password)
-      setAuthToken(response.token)
       setUser(response.user)
       
       // Redirect based on role
@@ -63,7 +82,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ) => {
     try {
       const response = await authApi.register(email, password, name, phone, role)
-      setAuthToken(response.token)
       setUser(response.user)
       
       // Redirect based on role
@@ -74,8 +92,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = () => {
-    removeAuthToken()
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
     router.push("/")
   }

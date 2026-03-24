@@ -1,6 +1,4 @@
-// API Configuration and Utilities
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api"
+import { assertSupabaseEnv, supabase } from "@/lib/supabase"
 
 export interface ApiResponse<T = any> {
   success: boolean
@@ -58,73 +56,147 @@ export interface Booking {
   }
 }
 
-// Get auth token from localStorage
-export const getAuthToken = (): string | null => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem("auth_token")
-  }
-  return null
+type UserRole = "STUDENT" | "TEACHER" | "ADMIN"
+type BookingStatus = "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED"
+type PaymentStatus = "PENDING" | "COMPLETED" | "FAILED" | "REFUNDED"
+type ClassStatus = "SCHEDULED" | "ONGOING" | "COMPLETED" | "CANCELLED"
+
+type UserRow = {
+  id: string
+  email: string
+  name: string
+  phone: string | null
+  role: UserRole
+  createdAt?: string
 }
 
-// Set auth token in localStorage
-export const setAuthToken = (token: string): void => {
-  if (typeof window !== "undefined") {
-    localStorage.setItem("auth_token", token)
-  }
+type ClassRow = {
+  id: string
+  title: string
+  description: string | null
+  subject: string | null
+  startTime: string
+  endTime: string
+  date: string
+  room: string | null
+  location: string | null
+  capacity: number
+  price: number
+  status: ClassStatus
+  teacherId?: string
+  teacher_id?: string
 }
 
-// Remove auth token from localStorage
+type BookingRow = {
+  id: string
+  status: BookingStatus
+  bookingDate: string
+  expiresAt: string | null
+  studentId: string
+  classId: string
+}
+
+type PaymentRow = {
+  id: string
+  amount: number
+  status: PaymentStatus
+  paymentMethod: string | null
+  transactionId: string | null
+  paidAt: string | null
+  userId: string
+  bookingId: string
+}
+
+const toUser = (row: UserRow): User => ({
+  id: row.id,
+  email: row.email,
+  name: row.name,
+  phone: row.phone,
+  role: row.role,
+  createdAt: row.createdAt,
+})
+
+const ensureSupabaseReady = () => {
+  assertSupabaseEnv()
+}
+
+const resolveTeacherId = (row: ClassRow): string => row.teacherId || row.teacher_id || ""
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const waitForSession = async (expectedUserId?: string, attempts = 8): Promise<string> => {
+  for (let i = 0; i < attempts; i += 1) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+
+    if (session?.access_token && (!expectedUserId || session.user.id === expectedUserId)) {
+      return session.access_token
+    }
+
+    await sleep(150)
+  }
+
+  throw new Error("Session not ready yet. Please try again.")
+}
+
+const fetchUserProfile = async (userId: string, attempts = 6): Promise<UserRow> => {
+  for (let i = 0; i < attempts; i += 1) {
+    const { data: profile, error } = await supabase
+      .from("users")
+      .select("id,email,name,phone,role,createdAt")
+      .eq("id", userId)
+      .single()
+
+    if (profile) {
+      return profile as UserRow
+    }
+
+    if (!error || error.code === "PGRST116") {
+      await sleep(150)
+      continue
+    }
+
+    throw new Error(error.message)
+  }
+
+  throw new Error("User profile missing in `users` table")
+}
+
+export const getAuthToken = (): string | null => null
+export const setAuthToken = (_token: string): void => {}
 export const removeAuthToken = (): void => {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem("auth_token")
-  }
+  void supabase.auth.signOut()
 }
 
-// API request helper
-async function apiRequest<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<ApiResponse<T>> {
-  const token = getAuthToken()
-  
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...options.headers,
+const ensureAuthenticatedUser = async (): Promise<UserRow> => {
+  const {
+    data: { user: authUser },
+  } = await supabase.auth.getUser()
+
+  if (!authUser) {
+    throw new Error("Not authenticated")
   }
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`
-  }
-
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers,
-    })
-
-    const data = await response.json()
-
-    if (!response.ok) {
-      throw new Error(data.message || "An error occurred")
-    }
-
-    return data
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error("Network error")
-  }
+  return fetchUserProfile(authUser.id)
 }
 
 // Auth API
 export const authApi = {
   login: async (email: string, password: string): Promise<LoginResponse> => {
-    const response = await apiRequest<LoginResponse>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error || !data.session || !data.user) {
+      throw new Error(error?.message || "Login failed")
+    }
+
+    const token = await waitForSession(data.user.id)
+    const profile = await fetchUserProfile(data.user.id)
+
+    return {
+      user: toUser(profile as UserRow),
+      token,
+    }
   },
 
   register: async (
@@ -134,16 +206,54 @@ export const authApi = {
     phone?: string,
     role?: string
   ): Promise<LoginResponse> => {
-    const response = await apiRequest<LoginResponse>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name, phone, role }),
+    ensureSupabaseReady()
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+          role: role || "STUDENT",
+        },
+      },
     })
-    return response.data!
+
+    if (error || !data.user) {
+      throw new Error(error?.message || "Registration failed")
+    }
+
+    const { error: profileError } = await supabase.from("users").upsert({
+      id: data.user.id,
+      email,
+      name,
+      phone: phone || null,
+      role: (role || "STUDENT") as UserRole,
+    })
+
+    if (profileError) {
+      throw new Error(profileError.message)
+    }
+
+    if (!data.session) {
+      throw new Error("Check your email to confirm your account, then log in.")
+    }
+
+    return {
+      user: {
+        id: data.user.id,
+        email,
+        name,
+        phone: phone || null,
+        role: (role || "STUDENT") as UserRole,
+      },
+      token: data.session.access_token,
+    }
   },
 
   getMe: async (): Promise<User> => {
-    const response = await apiRequest<User>("/auth/me")
-    return response.data!
+    ensureSupabaseReady()
+    const profile = await ensureAuthenticatedUser()
+    return toUser(profile)
   },
 }
 
@@ -154,43 +264,100 @@ export const classesApi = {
     teacherId?: string
     status?: string
   }): Promise<Class[]> => {
-    const queryParams = new URLSearchParams()
-    if (params?.date) queryParams.append("date", params.date)
-    if (params?.teacherId) queryParams.append("teacherId", params.teacherId)
-    if (params?.status) queryParams.append("status", params.status)
+    ensureSupabaseReady()
+    const runQuery = async (teacherColumn: "teacherId" | "teacher_id") => {
+      let query = supabase.from("classes").select("*").order("date", { ascending: true })
+      if (params?.date) query = query.eq("date", params.date)
+      if (params?.teacherId) query = query.eq(teacherColumn, params.teacherId)
+      if (params?.status) query = query.eq("status", params.status)
+      return query
+    }
 
-    const queryString = queryParams.toString()
-    const endpoint = queryString ? `/classes?${queryString}` : "/classes"
+    let data: any[] | null = null
+    let error: { message: string } | null = null
 
-    const response = await apiRequest<Class[]>(endpoint)
-    return response.data || []
+    const first = await runQuery("teacherId")
+    data = first.data
+    error = first.error
+
+    if (error?.message?.includes("column classes.teacherId does not exist")) {
+      const fallback = await runQuery("teacher_id")
+      data = fallback.data
+      error = fallback.error
+    }
+
+    if (error) throw new Error(error.message)
+
+    const rows = (data || []) as ClassRow[]
+    const teacherIds = Array.from(new Set(rows.map((r) => resolveTeacherId(r)).filter(Boolean)))
+
+    let teachersById = new Map<string, UserRow>()
+    if (teacherIds.length > 0) {
+      const { data: teachers } = await supabase
+        .from("users")
+        .select("id,name,email,phone,role,createdAt")
+        .in("id", teacherIds)
+      teachersById = new Map((teachers as UserRow[] | null || []).map((t) => [t.id, t]))
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      teacher: teachersById.has(resolveTeacherId(row))
+        ? {
+            id: resolveTeacherId(row),
+            name: teachersById.get(resolveTeacherId(row))!.name,
+            email: teachersById.get(resolveTeacherId(row))!.email,
+          }
+        : undefined,
+    }))
   },
 
   getById: async (id: string): Promise<Class> => {
-    const response = await apiRequest<Class>(`/classes/${id}`)
-    return response.data!
+    ensureSupabaseReady()
+    const { data, error } = await supabase.from("classes").select("*").eq("id", id).single()
+    if (error || !data) throw new Error(error?.message || "Class not found")
+    return data as Class
   },
 
   create: async (classData: Partial<Class>): Promise<Class> => {
-    const response = await apiRequest<Class>("/classes", {
-      method: "POST",
-      body: JSON.stringify(classData),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const me = await ensureAuthenticatedUser()
+    const payloadCamel = {
+      ...classData,
+      teacherId: me.id,
+      status: (classData.status || "SCHEDULED") as ClassStatus,
+    }
+    const first = await supabase.from("classes").insert(payloadCamel).select("*").single()
+
+    let data = first.data
+    let error = first.error
+
+    if (error?.message?.includes("column \"teacherId\" of relation \"classes\" does not exist")) {
+      const payloadSnake = {
+        ...classData,
+        teacher_id: me.id,
+        status: (classData.status || "SCHEDULED") as ClassStatus,
+      }
+      const fallback = await supabase.from("classes").insert(payloadSnake).select("*").single()
+      data = fallback.data
+      error = fallback.error
+    }
+
+    if (error || !data) throw new Error(error?.message || "Failed to create class")
+    return data as Class
   },
 
   update: async (id: string, classData: Partial<Class>): Promise<Class> => {
-    const response = await apiRequest<Class>(`/classes/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(classData),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const { data, error } = await supabase.from("classes").update(classData).eq("id", id).select("*").single()
+    if (error || !data) throw new Error(error?.message || "Failed to update class")
+    return data as Class
   },
 
   delete: async (id: string): Promise<void> => {
-    await apiRequest(`/classes/${id}`, {
-      method: "DELETE",
-    })
+    ensureSupabaseReady()
+    const { error } = await supabase.from("classes").delete().eq("id", id)
+    if (error) throw new Error(error.message)
   },
 }
 
@@ -201,44 +368,88 @@ export const bookingsApi = {
     studentId?: string
     classId?: string
   }): Promise<Booking[]> => {
-    const queryParams = new URLSearchParams()
-    if (params?.status) queryParams.append("status", params.status)
-    if (params?.studentId) queryParams.append("studentId", params.studentId)
-    if (params?.classId) queryParams.append("classId", params.classId)
+    ensureSupabaseReady()
+    let query = supabase.from("bookings").select("*").order("bookingDate", { ascending: false })
+    if (params?.status) query = query.eq("status", params.status)
+    if (params?.studentId) query = query.eq("studentId", params.studentId)
+    if (params?.classId) query = query.eq("classId", params.classId)
 
-    const queryString = queryParams.toString()
-    const endpoint = queryString ? `/bookings?${queryString}` : "/bookings"
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    const rows = (data || []) as BookingRow[]
 
-    const response = await apiRequest<Booking[]>(endpoint)
-    return response.data || []
+    const studentIds = Array.from(new Set(rows.map((r) => r.studentId)))
+    const classIds = Array.from(new Set(rows.map((r) => r.classId)))
+    const bookingIds = rows.map((r) => r.id)
+
+    const [{ data: students }, { data: classes }, { data: payments }] = await Promise.all([
+      studentIds.length
+        ? supabase.from("users").select("id,email,name,phone,role,createdAt").in("id", studentIds)
+        : Promise.resolve({ data: [] }),
+      classIds.length ? supabase.from("classes").select("*").in("id", classIds) : Promise.resolve({ data: [] }),
+      bookingIds.length
+        ? supabase.from("payments").select("*").in("bookingId", bookingIds)
+        : Promise.resolve({ data: [] }),
+    ])
+
+    const studentsById = new Map(((students as UserRow[]) || []).map((u) => [u.id, u]))
+    const classesById = new Map(((classes as Class[]) || []).map((c) => [c.id, c]))
+    const paymentsByBooking = new Map(((payments as PaymentRow[]) || []).map((p) => [p.bookingId, p]))
+
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      bookingDate: row.bookingDate,
+      expiresAt: row.expiresAt,
+      student: toUser(studentsById.get(row.studentId)!),
+      class: classesById.get(row.classId)!,
+      payment: paymentsByBooking.has(row.id)
+        ? {
+            id: paymentsByBooking.get(row.id)!.id,
+            amount: paymentsByBooking.get(row.id)!.amount,
+            status: paymentsByBooking.get(row.id)!.status,
+          }
+        : undefined,
+    }))
   },
 
   getById: async (id: string): Promise<Booking> => {
-    const response = await apiRequest<Booking>(`/bookings/${id}`)
-    return response.data!
+    ensureSupabaseReady()
+    const items = await bookingsApi.getAll()
+    const booking = items.find((b) => b.id === id)
+    if (!booking) throw new Error("Booking not found")
+    return booking
   },
 
   create: async (classId: string): Promise<Booking> => {
-    const response = await apiRequest<Booking>("/bookings", {
-      method: "POST",
-      body: JSON.stringify({ classId }),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const me = await ensureAuthenticatedUser()
+    const { data, error } = await supabase
+      .from("bookings")
+      .insert({
+        classId,
+        studentId: me.id,
+        status: "PENDING" as BookingStatus,
+      })
+      .select("*")
+      .single()
+
+    if (error || !data) throw new Error(error?.message || "Failed to create booking")
+    return bookingsApi.getById((data as BookingRow).id)
   },
 
   update: async (id: string, status: string): Promise<Booking> => {
-    const response = await apiRequest<Booking>(`/bookings/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ status }),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const { error } = await supabase.from("bookings").update({ status }).eq("id", id)
+    if (error) throw new Error(error.message)
+    return bookingsApi.getById(id)
   },
 
   cancel: async (id: string): Promise<Booking> => {
-    const response = await apiRequest<Booking>(`/bookings/${id}`, {
-      method: "DELETE",
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const { error } = await supabase.from("bookings").update({ status: "CANCELLED" }).eq("id", id)
+    if (error) throw new Error(error.message)
+    return bookingsApi.getById(id)
   },
 }
 
@@ -249,47 +460,68 @@ export const paymentsApi = {
     paymentMethod?: string,
     transactionId?: string
   ): Promise<any> => {
-    const response = await apiRequest("/payments", {
-      method: "POST",
-      body: JSON.stringify({ bookingId, paymentMethod, transactionId }),
-    })
-    return response.data
+    ensureSupabaseReady()
+    const me = await ensureAuthenticatedUser()
+    const booking = await bookingsApi.getById(bookingId)
+
+    const { data, error } = await supabase
+      .from("payments")
+      .upsert(
+        {
+          bookingId,
+          userId: me.id,
+          amount: booking.class.price,
+          status: "COMPLETED" as PaymentStatus,
+          paymentMethod: paymentMethod || null,
+          transactionId: transactionId || null,
+          paidAt: new Date().toISOString(),
+        },
+        { onConflict: "bookingId" }
+      )
+      .select("*")
+      .single()
+
+    if (error || !data) throw new Error(error?.message || "Failed to create payment")
+
+    await supabase.from("bookings").update({ status: "CONFIRMED" }).eq("id", bookingId)
+    return data
   },
 
   getAll: async (params?: { status?: string }): Promise<any[]> => {
-    const queryParams = new URLSearchParams()
-    if (params?.status) queryParams.append("status", params.status)
-
-    const queryString = queryParams.toString()
-    const endpoint = queryString ? `/payments?${queryString}` : "/payments"
-
-    const response = await apiRequest<any[]>(endpoint)
-    return response.data || []
+    ensureSupabaseReady()
+    let query = supabase.from("payments").select("*").order("createdAt", { ascending: false })
+    if (params?.status) query = query.eq("status", params.status)
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    return data || []
   },
 
   getById: async (id: string): Promise<any> => {
-    const response = await apiRequest(`/payments/${id}`)
-    return response.data!
+    ensureSupabaseReady()
+    const { data, error } = await supabase.from("payments").select("*").eq("id", id).single()
+    if (error || !data) throw new Error(error?.message || "Payment not found")
+    return data
   },
 }
 
 // Users API
 export const usersApi = {
   getAll: async (params?: { role?: string; search?: string }): Promise<User[]> => {
-    const queryParams = new URLSearchParams()
-    if (params?.role) queryParams.append("role", params.role)
-    if (params?.search) queryParams.append("search", params.search)
+    ensureSupabaseReady()
+    let query = supabase.from("users").select("id,email,name,phone,role,createdAt").order("createdAt", { ascending: false })
+    if (params?.role) query = query.eq("role", params.role)
+    if (params?.search) query = query.ilike("name", `%${params.search}%`)
 
-    const queryString = queryParams.toString()
-    const endpoint = queryString ? `/users?${queryString}` : "/users"
-
-    const response = await apiRequest<User[]>(endpoint)
-    return response.data || []
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    return ((data as UserRow[]) || []).map(toUser)
   },
 
   getById: async (id: string): Promise<User> => {
-    const response = await apiRequest<User>(`/users/${id}`)
-    return response.data!
+    ensureSupabaseReady()
+    const { data, error } = await supabase.from("users").select("id,email,name,phone,role,createdAt").eq("id", id).single()
+    if (error || !data) throw new Error(error?.message || "User not found")
+    return toUser(data as UserRow)
   },
 
   create: async (
@@ -299,25 +531,36 @@ export const usersApi = {
     role: "STUDENT" | "TEACHER" | "ADMIN",
     phone?: string
   ): Promise<User> => {
-    const response = await apiRequest<User>("/users", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name, role, phone }),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    throw new Error(
+      "Creating users from the browser is blocked in Supabase for security. Create/invite users in Supabase Auth dashboard."
+    )
   },
 
   update: async (id: string, data: { name?: string; phone?: string; password?: string }): Promise<User> => {
-    const response = await apiRequest<User>(`/users/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    })
-    return response.data!
+    ensureSupabaseReady()
+    const updates: Record<string, string | null> = {}
+    if (typeof data.name === "string") updates.name = data.name
+    if (typeof data.phone === "string") updates.phone = data.phone
+
+    const { error } = await supabase.from("users").update(updates).eq("id", id)
+    if (error) throw new Error(error.message)
+
+    if (data.password) {
+      const me = await ensureAuthenticatedUser()
+      if (me.id === id) {
+        const { error: passwordError } = await supabase.auth.updateUser({ password: data.password })
+        if (passwordError) throw new Error(passwordError.message)
+      }
+    }
+
+    return usersApi.getById(id)
   },
 
   delete: async (id: string): Promise<void> => {
-    await apiRequest(`/users/${id}`, {
-      method: "DELETE",
-    })
+    ensureSupabaseReady()
+    const { error } = await supabase.from("users").delete().eq("id", id)
+    if (error) throw new Error(error.message)
   },
 }
 

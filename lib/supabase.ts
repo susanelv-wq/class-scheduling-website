@@ -1,0 +1,17 @@
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+export const hasSupabaseEnv = Boolean(supabaseUrl && supabaseAnonKey)
+
+export const supabase = createClient(
+  supabaseUrl || "http://127.0.0.1:54321",
+  supabaseAnonKey || "missing-anon-key"
+)
+
+export const assertSupabaseEnv = () => {
+  if (!hasSupabaseEnv) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
+  }
+}

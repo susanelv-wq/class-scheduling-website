@@ -17,7 +17,6 @@ export function CreateUserModal({ onClose, onSuccess }: CreateUserModalProps) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
-    password: "",
     phone: "",
     role: "STUDENT" as "STUDENT" | "TEACHER" | "ADMIN",
   })
@@ -26,25 +25,8 @@ export function CreateUserModal({ onClose, onSuccess }: CreateUserModalProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const { usersApi } = await import("@/lib/api")
-      await usersApi.create(
-        formData.email,
-        formData.password,
-        formData.name,
-        formData.role,
-        formData.phone || undefined
-      )
-      onSuccess()
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create user")
-    } finally {
-      setLoading(false)
-    }
+    setError("Create/invite users from Supabase Auth dashboard, then set role in the users table.")
+    setLoading(false)
   }
 
   return (
@@ -84,17 +66,8 @@ export function CreateUserModal({ onClose, onSuccess }: CreateUserModalProps) {
             />
           </div>
 
-          <div>
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              required
-              minLength={6}
-              placeholder="Minimum 6 characters"
-            />
+          <div className="p-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg">
+            User creation is managed in Supabase Auth dashboard for security.
           </div>
 
           <div>
