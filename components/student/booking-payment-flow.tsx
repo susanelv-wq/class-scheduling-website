@@ -6,6 +6,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { AlertCircle, CheckCircle2, Clock, CreditCard } from "lucide-react"
+import { formatRupiah } from "@/lib/currency"
 
 interface BookingPaymentFlowProps {
   class: {
@@ -193,7 +194,7 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             <div className="space-y-2 text-sm mb-3">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{cls.title}</span>
-                <span className="font-medium text-foreground">${cls.price.toFixed(2)}</span>
+                <span className="font-medium text-foreground">{formatRupiah(cls.price)}</span>
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>{cls.time}</span>
@@ -202,7 +203,7 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             </div>
             <div className="border-t border-border pt-3 flex justify-between font-semibold text-foreground">
               <span>Total Amount:</span>
-              <span className="text-lg text-accent">${cls.price.toFixed(2)}</span>
+              <span className="text-lg text-accent">{formatRupiah(cls.price)}</span>
             </div>
           </Card>
 
@@ -273,7 +274,7 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             </Button>
             <Button type="submit" className="flex-1 bg-accent hover:bg-accent/90 text-accent-foreground">
               <CreditCard className="w-4 h-4 mr-2" />
-              Pay ${cls.price.toFixed(2)}
+              Pay {formatRupiah(cls.price)}
             </Button>
           </div>
         </form>
@@ -308,7 +309,7 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             </div>
             <div className="pt-3 border-t border-border">
               <p className="text-xs text-muted-foreground">Amount Paid</p>
-              <p className="text-xl font-bold text-accent">${cls.price.toFixed(2)}</p>
+              <p className="text-xl font-bold text-accent">{formatRupiah(cls.price)}</p>
             </div>
           </Card>
 

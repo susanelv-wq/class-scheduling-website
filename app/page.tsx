@@ -46,7 +46,7 @@ export default function LoginPage() {
               />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">ClassHub</h1>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Indonesian Language Course</h1>
           <p className="text-muted-foreground">Schedule and manage your classes effortlessly</p>
         </div>
 

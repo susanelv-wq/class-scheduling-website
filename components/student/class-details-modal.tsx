@@ -4,10 +4,12 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { X, Clock, MapPin, Users, CheckCircle } from "lucide-react"
+import { bookingsApi } from "@/lib/api"
+import { formatRupiah } from "@/lib/currency"
 
 interface ClassDetailsModalProps {
   class: {
-    id: number
+    id: string
     title: string
     teacher: string
     subject: string
@@ -19,6 +21,7 @@ interface ClassDetailsModalProps {
     capacity: number
     enrolled: number
     description: string
+    alreadyBooked?: boolean
   }
   onClose: () => void
 }
@@ -26,11 +29,25 @@ interface ClassDetailsModalProps {
 export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProps) {
   const [isBooked, setIsBooked] = useState(false)
   const [showBookingForm, setShowBookingForm] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [bookingError, setBookingError] = useState<string | null>(null)
   const spotsLeft = cls.capacity - cls.enrolled
+
+  const handleConfirmBooking = async () => {
+    setIsLoading(true)
+    setBookingError(null)
+    try {
+      await bookingsApi.create(cls.id)
+      setIsBooked(true)
+    } catch (err: any) {
+      setBookingError(err?.message || "Failed to create booking. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/50 z-40 transition-opacity"
         onClick={onClose}
@@ -38,8 +55,6 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
         tabIndex={0}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       />
-
-      {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
           <div className="sticky top-0 bg-card border-b border-border p-6 flex items-center justify-between">
@@ -54,7 +69,6 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
           </div>
 
           <div className="p-6 space-y-6">
-            {/* Class Info */}
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -66,7 +80,6 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
                   <p className="text-sm font-medium text-foreground mt-1">{cls.teacher}</p>
                 </div>
               </div>
-
               <div className="bg-secondary/50 rounded-lg p-4 space-y-3">
                 <div className="flex items-center gap-3 text-sm">
                   <Clock className="w-5 h-5 text-accent flex-shrink-0" />
@@ -96,27 +109,36 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
               </div>
             </div>
 
-            {/* Description */}
             <div>
               <h3 className="font-semibold text-foreground mb-2">Course Description</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">{cls.description}</p>
             </div>
 
-            {/* Price and Booking */}
-            {!isBooked ? (
+            {cls.alreadyBooked ? (
+              <div className="border-t border-border pt-6 space-y-4 text-center">
+                <div className="flex justify-center">
+                  <CheckCircle className="w-12 h-12 text-green-500" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-foreground mb-1">Already Booked</h3>
+                  <p className="text-sm text-muted-foreground">You have already registered for this class.</p>
+                </div>
+                <Button onClick={onClose} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+                  Close
+                </Button>
+              </div>
+            ) : !isBooked ? (
               <div className="border-t border-border pt-6 space-y-4">
                 <div className="flex items-baseline justify-between">
                   <span className="text-muted-foreground">Price per class:</span>
-                  <span className="text-3xl font-bold text-accent">${cls.price}</span>
+                  <span className="text-3xl font-bold text-accent">{formatRupiah(cls.price)}</span>
                 </div>
-
                 <div className="bg-secondary/50 rounded-lg p-3 text-sm">
                   <p className="text-muted-foreground">
                     You have 2 hours after booking to complete payment. If not paid within 2 hours, your reservation
                     will be automatically cancelled.
                   </p>
                 </div>
-
                 <div className="flex gap-3">
                   <Button variant="ghost" onClick={onClose} className="flex-1">
                     Cancel
@@ -147,8 +169,7 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
               </div>
             )}
 
-            {/* Booking Form */}
-            {showBookingForm && !isBooked && (
+            {showBookingForm && !isBooked && !cls.alreadyBooked && (
               <div className="border-t border-border pt-6 space-y-4 bg-secondary/30 rounded-lg p-4">
                 <h3 className="font-semibold text-foreground">Booking Information</h3>
                 <div className="space-y-3">
@@ -169,15 +190,17 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
                     />
                   </div>
                 </div>
+                {bookingError && <p className="text-sm text-red-500 mt-2">{bookingError}</p>}
                 <div className="flex gap-3">
                   <Button variant="ghost" onClick={() => setShowBookingForm(false)} className="flex-1">
                     Back
                   </Button>
                   <Button
-                    onClick={() => setIsBooked(true)}
+                    onClick={handleConfirmBooking}
+                    disabled={isLoading}
                     className="flex-1 bg-accent hover:bg-accent/90 text-accent-foreground"
                   >
-                    Confirm Booking
+                    {isLoading ? "Booking..." : "Confirm Booking"}
                   </Button>
                 </div>
               </div>

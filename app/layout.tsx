@@ -9,8 +9,8 @@ const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "ClassHub - Schedule Your Classes",
-  description: "Manage and book your classes with ease",
+  title: "Indonesian Language Course",
+  description: "Book and manage Indonesian language classes",
   generator: "v0.app",
   icons: {
     icon: [

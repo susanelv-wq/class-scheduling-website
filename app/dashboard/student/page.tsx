@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { ClassDetailsModal } from "@/components/student/class-details-modal"
 import { useAuth } from "@/lib/auth-context"
-import { classesApi, type Class } from "@/lib/api"
+import { bookingsApi, classesApi, type Class } from "@/lib/api"
 
 export default function StudentDashboard() {
   const [classes, setClasses] = useState<Class[]>([])
@@ -27,7 +27,13 @@ export default function StudentDashboard() {
     const fetchClasses = async () => {
       try {
         const data = await classesApi.getAll()
-        setClasses(data)
+        if (user?.id) {
+          const myBookings = await bookingsApi.getAll({ studentId: user.id })
+          const myClassIds = new Set(myBookings.map((b) => b.class?.id))
+          setClasses(data.map((c: any) => ({ ...c, alreadyBooked: myClassIds.has(c.id) })))
+        } else {
+          setClasses(data)
+        }
       } catch (error) {
         console.error("Failed to fetch classes:", error)
       } finally {
@@ -38,7 +44,7 @@ export default function StudentDashboard() {
     if (isAuthenticated) {
       fetchClasses()
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, user?.id])
 
   // Convert classes to time slot format for WeeklyCalendar
   const timeSlots = classes.map((cls) => ({
@@ -57,7 +63,12 @@ export default function StudentDashboard() {
       enrolled: cls.enrolled || 0,
       description: cls.description || "",
     },
-    color: (cls.enrolled || 0) >= cls.capacity ? "destructive" : "primary",
+    alreadyBooked: (cls as any).alreadyBooked,
+    color: (cls as any).alreadyBooked
+      ? "success"          // green = already booked by this student
+      : (cls.enrolled || 0) >= cls.capacity
+      ? "destructive"      // red = full
+      : "primary",         // teal = available
   }))
 
   const handleSelectSlot = (slot: any) => {
@@ -119,6 +130,7 @@ export default function StudentDashboard() {
             capacity: selectedSlot.details.capacity,
             enrolled: selectedSlot.details.enrolled,
             description: selectedSlot.details.description,
+            alreadyBooked: selectedSlot.alreadyBooked ?? false,
           }}
           onClose={() => setSelectedSlot(null)}
         />

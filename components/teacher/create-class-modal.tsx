@@ -187,7 +187,7 @@ export function CreateClassModal({
             </div>
 
             <div>
-              <Label htmlFor="price">Price ($)</Label>
+              <Label htmlFor="price">Price (Rp)</Label>
               <Input
                 id="price"
                 type="number"

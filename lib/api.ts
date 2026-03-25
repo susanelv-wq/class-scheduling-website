@@ -1,4 +1,4 @@
-import { assertSupabaseEnv, supabase } from "@/lib/supabase"
+import { assertSupabaseEnv, clearSupabaseBrowserAuth, supabase } from "@/lib/supabase"
 
 export interface ApiResponse<T = any> {
   success: boolean
@@ -166,7 +166,9 @@ const fetchUserProfile = async (userId: string, attempts = 6): Promise<UserRow> 
 export const getAuthToken = (): string | null => null
 export const setAuthToken = (_token: string): void => {}
 export const removeAuthToken = (): void => {
-  void supabase.auth.signOut()
+  void supabase.auth.signOut().catch(() => {
+    void clearSupabaseBrowserAuth()
+  })
 }
 
 const ensureAuthenticatedUser = async (): Promise<UserRow> => {
@@ -300,8 +302,23 @@ export const classesApi = {
       teachersById = new Map((teachers as UserRow[] | null || []).map((t) => [t.id, t]))
     }
 
+    // Add enrollment counts from bookings table
+    const classIds = rows.map((r) => r.id)
+    let enrollmentMap = new Map<string, number>()
+    if (classIds.length > 0) {
+      const { data: bookingCounts } = await supabase
+        .from("bookings")
+        .select("classId")
+        .in("classId", classIds)
+        .in("status", ["CONFIRMED", "PENDING"])
+      ;(bookingCounts || []).forEach((b: any) => {
+        enrollmentMap.set(b.classId, (enrollmentMap.get(b.classId) || 0) + 1)
+      })
+    }
+
     return rows.map((row) => ({
       ...row,
+      enrolled: enrollmentMap.get(row.id) || 0,
       teacher: teachersById.has(resolveTeacherId(row))
         ? {
             id: resolveTeacherId(row),
@@ -322,9 +339,11 @@ export const classesApi = {
   create: async (classData: Partial<Class>): Promise<Class> => {
     ensureSupabaseReady()
     const me = await ensureAuthenticatedUser()
+    const desiredTeacherId =
+      me.role === "ADMIN" && typeof (classData as any).teacherId === "string" ? (classData as any).teacherId : me.id
     const payloadCamel = {
       ...classData,
-      teacherId: me.id,
+      teacherId: desiredTeacherId,
       status: (classData.status || "SCHEDULED") as ClassStatus,
     }
     const first = await supabase.from("classes").insert(payloadCamel).select("*").single()
@@ -335,7 +354,7 @@ export const classesApi = {
     if (error?.message?.includes("column \"teacherId\" of relation \"classes\" does not exist")) {
       const payloadSnake = {
         ...classData,
-        teacher_id: me.id,
+        teacher_id: desiredTeacherId,
         status: (classData.status || "SCHEDULED") as ClassStatus,
       }
       const fallback = await supabase.from("classes").insert(payloadSnake).select("*").single()
@@ -349,7 +368,24 @@ export const classesApi = {
 
   update: async (id: string, classData: Partial<Class>): Promise<Class> => {
     ensureSupabaseReady()
-    const { data, error } = await supabase.from("classes").update(classData).eq("id", id).select("*").single()
+    const first = await supabase.from("classes").update(classData).eq("id", id).select("*").single()
+
+    let data = first.data
+    let error = first.error
+
+    // If DB uses snake_case teacher_id, translate teacherId updates.
+    if (error?.message?.includes("column classes.teacherId does not exist") && typeof (classData as any).teacherId === "string") {
+      const { teacherId, ...rest } = classData as any
+      const fallback = await supabase
+        .from("classes")
+        .update({ ...rest, teacher_id: teacherId })
+        .eq("id", id)
+        .select("*")
+        .single()
+      data = fallback.data
+      error = fallback.error
+    }
+
     if (error || !data) throw new Error(error?.message || "Failed to update class")
     return data as Class
   },
@@ -396,21 +432,28 @@ export const bookingsApi = {
     const classesById = new Map(((classes as Class[]) || []).map((c) => [c.id, c]))
     const paymentsByBooking = new Map(((payments as PaymentRow[]) || []).map((p) => [p.bookingId, p]))
 
-    return rows.map((row) => ({
-      id: row.id,
-      status: row.status,
-      bookingDate: row.bookingDate,
-      expiresAt: row.expiresAt,
-      student: toUser(studentsById.get(row.studentId)!),
-      class: classesById.get(row.classId)!,
-      payment: paymentsByBooking.has(row.id)
-        ? {
-            id: paymentsByBooking.get(row.id)!.id,
-            amount: paymentsByBooking.get(row.id)!.amount,
-            status: paymentsByBooking.get(row.id)!.status,
-          }
-        : undefined,
-    }))
+    const out: Booking[] = []
+    for (const row of rows) {
+      const studentRow = studentsById.get(row.studentId)
+      const classRow = classesById.get(row.classId)
+      if (!studentRow || !classRow) continue
+      out.push({
+        id: row.id,
+        status: row.status,
+        bookingDate: row.bookingDate,
+        expiresAt: row.expiresAt,
+        student: toUser(studentRow),
+        class: classRow as Class,
+        payment: paymentsByBooking.has(row.id)
+          ? {
+              id: paymentsByBooking.get(row.id)!.id,
+              amount: paymentsByBooking.get(row.id)!.amount,
+              status: paymentsByBooking.get(row.id)!.status,
+            }
+          : undefined,
+      })
+    }
+    return out
   },
 
   getById: async (id: string): Promise<Booking> => {

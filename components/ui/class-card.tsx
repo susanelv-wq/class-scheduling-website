@@ -3,6 +3,7 @@
 import { Clock, MapPin, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { formatRupiah } from "@/lib/currency"
 
 interface ClassCardProps {
   title: string
@@ -37,7 +38,7 @@ export function ClassCard({
         <div>
           <div className="flex items-start justify-between gap-2 mb-2">
             <h3 className="font-semibold text-foreground text-lg leading-tight">{title}</h3>
-            <span className="text-accent font-bold text-lg whitespace-nowrap">${price}</span>
+            <span className="text-accent font-bold text-lg whitespace-nowrap">{formatRupiah(price)}</span>
           </div>
           <p className="text-sm text-muted-foreground">{teacher}</p>
         </div>

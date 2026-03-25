@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { authApi, type User } from "./api"
-import { hasSupabaseEnv, supabase } from "./supabase"
+import { clearSupabaseBrowserAuth, hasSupabaseEnv, supabase } from "./supabase"
 
 interface AuthContextType {
   user: User | null
@@ -29,20 +29,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const checkAuth = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
 
-      if (session) {
-        try {
-          const userData = await authApi.getMe()
-          setUser(userData)
-        } catch (error) {
-          await supabase.auth.signOut()
+        if (sessionError) {
+          await clearSupabaseBrowserAuth()
           setUser(null)
+          return
         }
+
+        if (session) {
+          try {
+            const userData = await authApi.getMe()
+            setUser(userData)
+          } catch {
+            await clearSupabaseBrowserAuth()
+            setUser(null)
+          }
+        }
+      } catch {
+        await clearSupabaseBrowserAuth()
+        setUser(null)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
 
     checkAuth()
@@ -93,7 +106,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = async () => {
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } catch {
+      await clearSupabaseBrowserAuth()
+    }
     setUser(null)
     router.push("/")
   }
