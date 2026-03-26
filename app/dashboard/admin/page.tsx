@@ -1,6 +1,9 @@
 "use client"
 
+export const dynamic = "force-dynamic"
+
 import { useState, useEffect, useMemo } from "react"
+import nextDynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { LayoutWrapper } from "@/components/navigation/layout-wrapper"
 import { Button } from "@/components/ui/button"
@@ -9,12 +12,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Users, Clock, DollarSign, AlertCircle, CheckCircle, UserPlus, Trash2, Plus, X } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { bookingsApi, classesApi, usersApi, type Booking, type Class, type User } from "@/lib/api"
 import { CreateUserModal } from "@/components/admin/create-user-modal"
 import { formatRupiah } from "@/lib/currency"
+
+const OccupancyPie = nextDynamic(
+  () => import("@/components/admin/occupancy-pie").then((m) => m.OccupancyPie),
+  { ssr: false },
+)
 
 type AdminSlotDetails = {
   teacher: string
@@ -188,7 +196,7 @@ export default function AdminDashboard() {
 
   const scrollToRevenue = () => {
     if (typeof window === "undefined") return
-    document.getElementById("admin-revenue")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    router.push("/dashboard/admin/users#revenue")
   }
 
   const toISODate = (d: Date) => d.toISOString().slice(0, 10)
@@ -232,25 +240,6 @@ export default function AdminDashboard() {
     return days
   }, [monthStart])
 
-  const revenueByClass = useMemo(() => {
-    const monthIdx = revenueMonth === "all" ? null : revenueMonth
-    const byId = new Map<string, { classId: string; title: string; date: string; teacher: string; revenue: number }>()
-    for (const s of calendarSlots) {
-      const d = new Date(`${s.date}T00:00:00`)
-      if (d.getFullYear() !== revenueYear) continue
-      if (monthIdx !== null && d.getMonth() !== monthIdx) continue
-      if (s.details.revenue <= 0) continue
-      byId.set(s.details.classId, {
-        classId: s.details.classId,
-        title: s.title,
-        date: s.date,
-        teacher: s.details.teacher,
-        revenue: s.details.revenue,
-      })
-    }
-    return Array.from(byId.values()).sort((a, b) => b.revenue - a.revenue)
-  }, [calendarSlots, revenueYear, revenueMonth])
-
   const totalRevenue = useMemo(
     () => calendarSlots.reduce((sum, s) => sum + s.details.revenue, 0),
     [calendarSlots],
@@ -259,6 +248,28 @@ export default function AdminDashboard() {
     () => calendarSlots.reduce((sum, s) => sum + s.details.enrolled, 0),
     [calendarSlots],
   )
+  const totalCapacity = useMemo(
+    () => calendarSlots.reduce((sum, s) => sum + (Number(s.details.capacity) || 0), 0),
+    [calendarSlots],
+  )
+
+  const occupancyRate = useMemo(() => {
+    if (totalCapacity <= 0) return 0
+    return Math.round((totalEnrolled / totalCapacity) * 100)
+  }, [totalEnrolled, totalCapacity])
+
+  const topClassOccupancy = useMemo(() => {
+    return [...calendarSlots]
+      .map((s) => {
+        const enrolled = Number(s.details.enrolled) || 0
+        const capacity = Number(s.details.capacity) || 0
+        const pct = capacity > 0 ? Math.round((enrolled / capacity) * 100) : 0
+        return { id: s.id, title: s.title, enrolled, capacity, pct }
+      })
+      .filter((x) => x.capacity > 0)
+      .sort((a, b) => b.pct - a.pct || b.enrolled - a.enrolled)
+      .slice(0, 6)
+  }, [calendarSlots])
   const pendingBookings = useMemo(
     () => calendarSlots.filter((s) => s.details.status === "pending").length,
     [calendarSlots],
@@ -490,6 +501,45 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
+        <Card className="p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">Occupancy Rate</h2>
+              <p className="text-sm text-muted-foreground">
+                {totalEnrolled} enrolled out of {totalCapacity} capacity ({occupancyRate}%)
+              </p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="max-w-[420px]">
+              <OccupancyPie enrolled={totalEnrolled} capacity={totalCapacity} size="sm" />
+            </div>
+
+            {topClassOccupancy.length > 0 && (
+              <div className="mt-5">
+                <h3 className="text-sm font-semibold text-foreground">Top classes (by occupancy)</h3>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {topClassOccupancy.map((c) => (
+                    <Card key={c.id} className="p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{c.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {c.enrolled}/{c.capacity} ({c.pct}%)
+                          </p>
+                        </div>
+                        <div className="w-[120px]">
+                          <OccupancyPie enrolled={c.enrolled} capacity={c.capacity} size="sm" />
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+
         {/* Master Calendar View */}
         <Card className="p-6">
           <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
@@ -595,73 +645,6 @@ export default function AdminDashboard() {
                   )
                 })}
               </div>
-            </div>
-          )}
-        </Card>
-
-        {/* Revenue breakdown */}
-        <Card className="p-6" id="admin-revenue">
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Revenue Breakdown</h2>
-              <p className="text-sm text-muted-foreground">See which classes generated revenue, by month and year.</p>
-            </div>
-            <div className="flex gap-2 items-end flex-wrap">
-              <div>
-                <Label>Year</Label>
-                <Input
-                  type="number"
-                  value={revenueYear}
-                  onChange={(e) => setRevenueYear(Number(e.target.value) || new Date().getFullYear())}
-                  className="w-[110px]"
-                />
-              </div>
-              <div>
-                <Label>Month</Label>
-                <select
-                  value={revenueMonth === "all" ? "all" : String(revenueMonth)}
-                  onChange={(e) => setRevenueMonth(e.target.value === "all" ? "all" : Number(e.target.value))}
-                  className="w-[170px] px-3 py-2 rounded-lg border border-border bg-background text-foreground"
-                >
-                  <option value="all">All months</option>
-                  {Array.from({ length: 12 }, (_, i) => i).map((i) => (
-                    <option key={i} value={i}>
-                      {new Date(2000, i, 1).toLocaleString(undefined, { month: "long" })}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {revenueByClass.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-8 text-center">No completed-payment revenue found for this period.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Class</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Teacher</th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
-                    <th className="text-right py-3 px-4 font-semibold text-foreground">Revenue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revenueByClass.map((r) => (
-                    <tr
-                      key={r.classId}
-                      className="border-b border-border hover:bg-secondary/20 cursor-pointer"
-                      onClick={() => openEditClass(r.classId)}
-                    >
-                      <td className="py-3 px-4 text-foreground font-medium">{r.title}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{r.teacher}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{r.date}</td>
-                      <td className="py-3 px-4 text-right font-semibold text-accent">{formatRupiah(r.revenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           )}
         </Card>

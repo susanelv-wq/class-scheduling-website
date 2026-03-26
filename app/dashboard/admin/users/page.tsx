@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/lib/auth-context"
-import { usersApi, type User } from "@/lib/api"
+import { bookingsApi, classesApi, usersApi, type Booking, type Class, type User } from "@/lib/api"
 import { X } from "lucide-react"
+import { formatRupiah } from "@/lib/currency"
 
 export default function AdminUsersPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth()
@@ -29,6 +30,28 @@ export default function AdminUsersPage() {
     phone: "",
     role: "STUDENT" as "STUDENT" | "TEACHER" | "ADMIN",
   })
+
+  // Revenue breakdown state (moved from dashboard)
+  const [classes, setClasses] = useState<Class[]>([])
+  const [bookings, setBookings] = useState<Booking[]>([])
+  const [revenueLoading, setRevenueLoading] = useState(true)
+  const [revenueError, setRevenueError] = useState<string | null>(null)
+  const [revenueYear, setRevenueYear] = useState(() => new Date().getFullYear())
+  const [revenueMonth, setRevenueMonth] = useState<number | "all">("all")
+
+  const refreshRevenue = async () => {
+    setRevenueLoading(true)
+    setRevenueError(null)
+    try {
+      const [c, b] = await Promise.all([classesApi.getAll(), bookingsApi.getAll()])
+      setClasses(c)
+      setBookings(b)
+    } catch (e) {
+      setRevenueError(e instanceof Error ? e.message : "Failed to load revenue data")
+    } finally {
+      setRevenueLoading(false)
+    }
+  }
 
   const fetchUsers = async () => {
     setLoading(true)
@@ -58,7 +81,62 @@ export default function AdminUsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, user?.role, filterRole, search])
 
+  useEffect(() => {
+    if (isAuthenticated && user?.role === "ADMIN") void refreshRevenue()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, user?.role])
+
   const filteredUsers = useMemo(() => users, [users])
+
+  const revenueSlots = useMemo(() => {
+    // Build per-class revenue from bookings/payments
+    const byClass = new Map<string, { classId: string; title: string; date: string; teacher: string; revenue: number }>()
+    for (const cls of classes) {
+      byClass.set(cls.id, {
+        classId: cls.id,
+        title: cls.title,
+        date: (typeof cls.date === "string" ? cls.date : new Date(cls.date as any).toISOString()).slice(0, 10),
+        teacher: cls.teacher?.name || "Unknown",
+        revenue: 0,
+      })
+    }
+    for (const b of bookings) {
+      if (b.payment?.status !== "COMPLETED") continue
+      const cid = b.class?.id
+      if (!cid) continue
+      if (!byClass.has(cid)) continue
+      byClass.get(cid)!.revenue += b.payment.amount || 0
+    }
+    return Array.from(byClass.values())
+  }, [classes, bookings])
+
+  const revenueByClass = useMemo(() => {
+    const monthIdx = revenueMonth === "all" ? null : revenueMonth
+    return revenueSlots
+      .filter((s) => {
+        const d = new Date(`${s.date}T00:00:00`)
+        if (d.getFullYear() !== revenueYear) return false
+        if (monthIdx !== null && d.getMonth() !== monthIdx) return false
+        return s.revenue > 0
+      })
+      .sort((a, b) => b.revenue - a.revenue)
+  }, [revenueSlots, revenueYear, revenueMonth])
+
+  const monthlyRevenueSummary = useMemo(() => {
+    const totals = Array.from({ length: 12 }, () => ({ classes: 0, revenue: 0 }))
+    const seenClass = new Set<string>()
+    for (const s of revenueSlots) {
+      const d = new Date(`${s.date}T00:00:00`)
+      if (d.getFullYear() !== revenueYear) continue
+      const m = d.getMonth()
+      if (!seenClass.has(s.classId)) {
+        totals[m].classes += 1
+        seenClass.add(s.classId)
+      }
+      totals[m].revenue += s.revenue
+    }
+    return totals
+  }, [revenueSlots, revenueYear])
 
   const openEdit = (u: User) => {
     setEditError(null)
@@ -204,6 +282,122 @@ export default function AdminUsersPage() {
                 ))}
               </tbody>
             </table>
+          )}
+        </Card>
+
+        {/* Revenue Breakdown (moved here from dashboard) */}
+        <Card className="p-6" id="revenue">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">Revenue Breakdown</h2>
+              <p className="text-sm text-muted-foreground">See which classes generated revenue, by month and year.</p>
+            </div>
+            <div className="flex gap-2 items-end flex-wrap">
+              <Button variant="outline" onClick={() => void refreshRevenue()} disabled={revenueLoading}>
+                {revenueLoading ? "Loading..." : "Refresh revenue"}
+              </Button>
+              <div>
+                <Label>Year</Label>
+                <Input
+                  type="number"
+                  value={revenueYear}
+                  onChange={(e) => setRevenueYear(Number(e.target.value) || new Date().getFullYear())}
+                  className="w-[110px]"
+                />
+              </div>
+              <div>
+                <Label>Month</Label>
+                <select
+                  value={revenueMonth === "all" ? "all" : String(revenueMonth)}
+                  onChange={(e) => setRevenueMonth(e.target.value === "all" ? "all" : Number(e.target.value))}
+                  className="w-[170px] px-3 py-2 rounded-lg border border-border bg-background text-foreground"
+                >
+                  <option value="all">All months</option>
+                  {Array.from({ length: 12 }, (_, i) => i).map((i) => (
+                    <option key={i} value={i}>
+                      {new Date(2000, i, 1).toLocaleString(undefined, { month: "long" })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {revenueError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive mb-4">
+              {revenueError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <Card className="p-4 bg-secondary/20 border border-border">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Monthly totals ({revenueYear})</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 pr-2 font-semibold text-muted-foreground">Month</th>
+                      <th className="text-right py-2 px-2 font-semibold text-muted-foreground">Classes</th>
+                      <th className="text-right py-2 pl-2 font-semibold text-muted-foreground">Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyRevenueSummary.map((m, idx) => (
+                      <tr
+                        key={idx}
+                        className="border-b border-border/50 hover:bg-secondary/30 cursor-pointer"
+                        onClick={() => setRevenueMonth(idx)}
+                      >
+                        <td className="py-2 pr-2 text-foreground">
+                          {new Date(2000, idx, 1).toLocaleString(undefined, { month: "long" })}
+                        </td>
+                        <td className="py-2 px-2 text-right text-muted-foreground">{m.classes}</td>
+                        <td className="py-2 pl-2 text-right font-semibold text-accent">{formatRupiah(m.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Click a month to filter the revenue list.</p>
+            </Card>
+
+            <Card className="p-4 bg-secondary/20 border border-border">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Sample data</h3>
+              <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+                <li>In Supabase, ensure you have at least 1 TEACHER and 1 STUDENT in <code className="text-xs">public.users</code>.</li>
+                <li>Open Supabase Dashboard → SQL Editor.</li>
+                <li>Run <code className="text-xs">supabase/sample-data.sql</code>.</li>
+              </ol>
+            </Card>
+          </div>
+
+          {revenueLoading ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">Loading revenue…</div>
+          ) : revenueByClass.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">No completed-payment revenue found for this period.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Class</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Teacher</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground">Date</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {revenueByClass.map((r) => (
+                    <tr key={r.classId} className="border-b border-border hover:bg-secondary/20">
+                      <td className="py-3 px-4 text-foreground font-medium">{r.title}</td>
+                      <td className="py-3 px-4 text-muted-foreground">{r.teacher}</td>
+                      <td className="py-3 px-4 text-muted-foreground">{r.date}</td>
+                      <td className="py-3 px-4 text-right font-semibold text-accent">{formatRupiah(r.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
 
