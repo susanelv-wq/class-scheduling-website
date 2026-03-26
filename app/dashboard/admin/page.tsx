@@ -3,7 +3,6 @@
 export const dynamic = "force-dynamic"
 
 import { useState, useEffect, useMemo } from "react"
-import nextDynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { LayoutWrapper } from "@/components/navigation/layout-wrapper"
 import { Button } from "@/components/ui/button"
@@ -18,11 +17,7 @@ import { useAuth } from "@/lib/auth-context"
 import { bookingsApi, classesApi, usersApi, type Booking, type Class, type User } from "@/lib/api"
 import { CreateUserModal } from "@/components/admin/create-user-modal"
 import { formatRupiah } from "@/lib/currency"
-
-const OccupancyPie = nextDynamic(
-  () => import("@/components/admin/occupancy-pie").then((m) => m.OccupancyPie),
-  { ssr: false },
-)
+import { useAppSettings } from "@/lib/use-app-settings"
 
 type AdminSlotDetails = {
   teacher: string
@@ -116,6 +111,7 @@ export default function AdminDashboard() {
   const [revenueYear, setRevenueYear] = useState(() => new Date().getFullYear())
   const [revenueMonth, setRevenueMonth] = useState<number | "all">("all")
   const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const { settings } = useAppSettings()
   const router = useRouter()
 
   useEffect(() => {
@@ -200,15 +196,19 @@ export default function AdminDashboard() {
   }
 
   const toISODate = (d: Date) => d.toISOString().slice(0, 10)
-  const addHour = (hhmm: string) => {
+  const addMinutes = (hhmm: string, minutesToAdd: number) => {
     const [hStr, mStr] = hhmm.split(":")
     const h = Math.min(23, Math.max(0, Number(hStr)))
     const m = Math.min(59, Math.max(0, Number(mStr)))
-    const endH = Math.min(23, h + 1)
-    return `${String(endH).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+    const base = h * 60 + m
+    const next = Math.min(23 * 60 + 59, Math.max(0, base + (Number(minutesToAdd) || 0)))
+    const endH = Math.floor(next / 60)
+    const endM = next % 60
+    return `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`
   }
 
   const handleEmptyHourClick = (date: string, time: string) => {
+    const duration = settings?.defaultClassDurationMinutes ?? 60
     setEditingClassId(null)
     setClassFormError(null)
     setClassForm((prev) => ({
@@ -216,7 +216,7 @@ export default function AdminDashboard() {
       teacherId: teacherOptions[0]?.id || prev.teacherId,
       date,
       startTime: time,
-      endTime: addHour(time),
+      endTime: addMinutes(time, duration),
     }))
     setShowCreateClassModal(true)
   }
@@ -258,18 +258,6 @@ export default function AdminDashboard() {
     return Math.round((totalEnrolled / totalCapacity) * 100)
   }, [totalEnrolled, totalCapacity])
 
-  const topClassOccupancy = useMemo(() => {
-    return [...calendarSlots]
-      .map((s) => {
-        const enrolled = Number(s.details.enrolled) || 0
-        const capacity = Number(s.details.capacity) || 0
-        const pct = capacity > 0 ? Math.round((enrolled / capacity) * 100) : 0
-        return { id: s.id, title: s.title, enrolled, capacity, pct }
-      })
-      .filter((x) => x.capacity > 0)
-      .sort((a, b) => b.pct - a.pct || b.enrolled - a.enrolled)
-      .slice(0, 6)
-  }, [calendarSlots])
   const pendingBookings = useMemo(
     () => calendarSlots.filter((s) => s.details.status === "pending").length,
     [calendarSlots],
@@ -318,6 +306,8 @@ export default function AdminDashboard() {
       ...prev,
       teacherId: teacherOptions[0]?.id || "",
       date: new Date().toISOString().slice(0, 10),
+      capacity: settings?.defaultCapacity ?? prev.capacity,
+      price: settings?.defaultPrice ?? prev.price,
     }))
     setShowCreateClassModal(true)
   }
@@ -510,33 +500,19 @@ export default function AdminDashboard() {
               </p>
             </div>
           </div>
-          <div className="mt-4">
-            <div className="max-w-[420px]">
-              <OccupancyPie enrolled={totalEnrolled} capacity={totalCapacity} size="sm" />
-            </div>
-
-            {topClassOccupancy.length > 0 && (
-              <div className="mt-5">
-                <h3 className="text-sm font-semibold text-foreground">Top classes (by occupancy)</h3>
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {topClassOccupancy.map((c) => (
-                    <Card key={c.id} className="p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{c.title}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {c.enrolled}/{c.capacity} ({c.pct}%)
-                          </p>
-                        </div>
-                        <div className="w-[120px]">
-                          <OccupancyPie enrolled={c.enrolled} capacity={c.capacity} size="sm" />
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground">Occupancy</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{occupancyRate}%</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground">Enrolled</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{totalEnrolled}</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs text-muted-foreground">Capacity</p>
+              <p className="text-2xl font-bold text-foreground mt-1">{totalCapacity}</p>
+            </Card>
           </div>
         </Card>
 
@@ -589,8 +565,8 @@ export default function AdminDashboard() {
               editable
               initialWeek={focusDate}
               daysToShow={7}
-              startHour={8}
-              endHour={19}
+              startHour={settings?.defaultStartHour ?? 8}
+              endHour={settings?.defaultEndHour ?? 19}
             />
           ) : calendarView === "day" ? (
             <WeeklyCalendar
@@ -600,8 +576,8 @@ export default function AdminDashboard() {
               editable
               initialWeek={focusDate}
               daysToShow={1}
-              startHour={8}
-              endHour={19}
+              startHour={settings?.defaultStartHour ?? 8}
+              endHour={settings?.defaultEndHour ?? 19}
             />
           ) : (
             <div className="border border-border rounded-lg overflow-hidden bg-background">

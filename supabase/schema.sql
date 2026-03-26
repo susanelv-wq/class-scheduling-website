@@ -102,6 +102,64 @@ alter table public.classes enable row level security;
 alter table public.bookings enable row level security;
 alter table public.payments enable row level security;
 
+-- Global app settings (single-row table)
+create table if not exists public.app_settings (
+  id integer primary key default 1,
+  "orgName" text not null default 'Indonesian Language Course',
+  timezone text not null default 'Asia/Jakarta',
+  locale text not null default 'id-ID',
+  "currencyCode" text not null default 'IDR',
+  "defaultStartHour" integer not null default 8,
+  "defaultEndHour" integer not null default 19,
+  "defaultClassDurationMinutes" integer not null default 60,
+  "defaultCapacity" integer not null default 20,
+  "defaultPrice" double precision not null default 0.0,
+  "allowStudentBooking" boolean not null default true,
+  "bookingWindowDays" integer not null default 60,
+  "paymentWindowMinutes" integer not null default 120,
+  "cancellationWindowMinutes" integer not null default 0,
+  "requirePhone" boolean not null default false,
+  "supportEmail" text,
+  "supportWhatsApp" text,
+  "termsUrl" text,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now(),
+  constraint app_settings_singleton check (id = 1),
+  constraint app_settings_hours check ("defaultStartHour" >= 0 and "defaultStartHour" <= 23 and "defaultEndHour" >= 0 and "defaultEndHour" <= 23 and "defaultEndHour" > "defaultStartHour"),
+  constraint app_settings_payment_window check ("paymentWindowMinutes" >= 0 and "paymentWindowMinutes" <= 1440),
+  constraint app_settings_booking_window check ("bookingWindowDays" >= 1 and "bookingWindowDays" <= 365),
+  constraint app_settings_cancellation_window check ("cancellationWindowMinutes" >= 0 and "cancellationWindowMinutes" <= 10080),
+  constraint app_settings_defaults check (
+    "defaultClassDurationMinutes" >= 15 and "defaultClassDurationMinutes" <= 360
+    and "defaultCapacity" >= 1 and "defaultCapacity" <= 200
+    and "defaultPrice" >= 0
+  )
+);
+
+insert into public.app_settings (id)
+values (1)
+on conflict (id) do nothing;
+
+-- Idempotent upgrades for older installs (safe to run multiple times)
+alter table public.app_settings add column if not exists locale text not null default 'id-ID';
+alter table public.app_settings add column if not exists "currencyCode" text not null default 'IDR';
+alter table public.app_settings add column if not exists "defaultClassDurationMinutes" integer not null default 60;
+alter table public.app_settings add column if not exists "defaultCapacity" integer not null default 20;
+alter table public.app_settings add column if not exists "defaultPrice" double precision not null default 0.0;
+alter table public.app_settings add column if not exists "allowStudentBooking" boolean not null default true;
+alter table public.app_settings add column if not exists "bookingWindowDays" integer not null default 60;
+alter table public.app_settings add column if not exists "cancellationWindowMinutes" integer not null default 0;
+alter table public.app_settings add column if not exists "requirePhone" boolean not null default false;
+alter table public.app_settings add column if not exists "supportEmail" text;
+alter table public.app_settings add column if not exists "supportWhatsApp" text;
+alter table public.app_settings add column if not exists "termsUrl" text;
+
+drop trigger if exists app_settings_set_updated_at on public.app_settings;
+create trigger app_settings_set_updated_at before update on public.app_settings
+for each row execute function public.set_updated_at();
+
+alter table public.app_settings enable row level security;
+
 create or replace function public.has_role(_user_id uuid, _role user_role)
 returns boolean
 language sql
@@ -207,3 +265,12 @@ for insert with check (auth.uid() = "userId");
 drop policy if exists "payment owner can update" on public.payments;
 create policy "payment owner can update" on public.payments
 for update using (auth.uid() = "userId");
+
+-- Settings policies
+drop policy if exists "authenticated can read app settings" on public.app_settings;
+create policy "authenticated can read app settings" on public.app_settings
+for select using (auth.uid() is not null);
+
+drop policy if exists "admins can update app settings" on public.app_settings;
+create policy "admins can update app settings" on public.app_settings
+for update using (public.has_role(auth.uid(), 'ADMIN'));

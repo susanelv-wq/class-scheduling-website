@@ -10,6 +10,7 @@ import { Plus } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { classesApi, type Class } from "@/lib/api"
 import { CreateClassModal } from "@/components/teacher/create-class-modal"
+import { useAppSettings } from "@/lib/use-app-settings"
 
 export default function SchedulePage() {
   const [classes, setClasses] = useState<Class[]>([])
@@ -23,6 +24,7 @@ export default function SchedulePage() {
     existingClass?: Class
   }>({})
   const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const { settings } = useAppSettings()
   const router = useRouter()
 
   useEffect(() => {
@@ -90,10 +92,13 @@ export default function SchedulePage() {
   }
 
   const handleSelectEmptySlot = (date: string, time: string) => {
-    // Calculate end time (default 1 hour)
+    const duration = settings?.defaultClassDurationMinutes ?? 60
     const [hours, minutes] = time.split(":").map(Number)
-    const endHours = (hours + 1) % 24
-    const endTime = `${String(endHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`
+    const base = (Number(hours) || 0) * 60 + (Number(minutes) || 0)
+    const next = Math.min(23 * 60 + 59, Math.max(0, base + duration))
+    const endHours = Math.floor(next / 60)
+    const endMinutes = next % 60
+    const endTime = `${String(endHours).padStart(2, "0")}:${String(endMinutes).padStart(2, "0")}`
 
     setCreateModalData({
       date,
@@ -145,8 +150,8 @@ export default function SchedulePage() {
             onSelectSlot={handleSelectSlot}
             onSelectEmptySlot={handleSelectEmptySlot}
             editable={true}
-            startHour={8}
-            endHour={18}
+            startHour={settings?.defaultStartHour ?? 8}
+            endHour={settings?.defaultEndHour ?? 19}
           />
         </Card>
 

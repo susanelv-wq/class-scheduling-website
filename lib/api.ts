@@ -56,10 +56,50 @@ export interface Booking {
   }
 }
 
+export interface AppSettings {
+  orgName: string
+  timezone: string
+  locale: string
+  currencyCode: string
+  defaultStartHour: number
+  defaultEndHour: number
+  defaultClassDurationMinutes: number
+  defaultCapacity: number
+  defaultPrice: number
+  allowStudentBooking: boolean
+  bookingWindowDays: number
+  paymentWindowMinutes: number
+  cancellationWindowMinutes: number
+  requirePhone: boolean
+  supportEmail?: string | null
+  supportWhatsApp?: string | null
+  termsUrl?: string | null
+}
+
 type UserRole = "STUDENT" | "TEACHER" | "ADMIN"
 type BookingStatus = "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED"
 type PaymentStatus = "PENDING" | "COMPLETED" | "FAILED" | "REFUNDED"
 type ClassStatus = "SCHEDULED" | "ONGOING" | "COMPLETED" | "CANCELLED"
+
+type AppSettingsRow = {
+  orgName: string
+  timezone: string
+  locale: string
+  currencyCode: string
+  defaultStartHour: number
+  defaultEndHour: number
+  defaultClassDurationMinutes: number
+  defaultCapacity: number
+  defaultPrice: number
+  allowStudentBooking: boolean
+  bookingWindowDays: number
+  paymentWindowMinutes: number
+  cancellationWindowMinutes: number
+  requirePhone: boolean
+  supportEmail: string | null
+  supportWhatsApp: string | null
+  termsUrl: string | null
+}
 
 type UserRow = {
   id: string
@@ -604,6 +644,38 @@ export const usersApi = {
     ensureSupabaseReady()
     const { error } = await supabase.from("users").delete().eq("id", id)
     if (error) throw new Error(error.message)
+  },
+}
+
+// Settings API
+export const settingsApi = {
+  get: async (): Promise<AppSettings> => {
+    ensureSupabaseReady()
+    const { data, error } = await supabase
+      .from("app_settings")
+      .select(
+        "orgName,timezone,locale,currencyCode,defaultStartHour,defaultEndHour,defaultClassDurationMinutes,defaultCapacity,defaultPrice,allowStudentBooking,bookingWindowDays,paymentWindowMinutes,cancellationWindowMinutes,requirePhone,supportEmail,supportWhatsApp,termsUrl"
+      )
+      .eq("id", 1)
+      .single()
+
+    if (error || !data) throw new Error(error?.message || "Settings not found")
+    return data as AppSettingsRow
+  },
+
+  update: async (updates: Partial<AppSettings>): Promise<AppSettings> => {
+    ensureSupabaseReady()
+    const { data, error } = await supabase
+      .from("app_settings")
+      .update(updates)
+      .eq("id", 1)
+      .select(
+        "orgName,timezone,locale,currencyCode,defaultStartHour,defaultEndHour,defaultClassDurationMinutes,defaultCapacity,defaultPrice,allowStudentBooking,bookingWindowDays,paymentWindowMinutes,cancellationWindowMinutes,requirePhone,supportEmail,supportWhatsApp,termsUrl"
+      )
+      .single()
+
+    if (error || !data) throw new Error(error?.message || "Failed to update settings")
+    return data as AppSettingsRow
   },
 }
 

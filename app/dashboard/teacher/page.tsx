@@ -9,12 +9,14 @@ import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { Users, Clock, TrendingUp } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { classesApi, type Class } from "@/lib/api"
+import { useAppSettings } from "@/lib/use-app-settings"
 
 export default function TeacherDashboard() {
   const [classes, setClasses] = useState<Class[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedClass, setSelectedClass] = useState<any>(null)
   const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const { settings } = useAppSettings()
   const router = useRouter()
 
   useEffect(() => {
@@ -121,8 +123,8 @@ export default function TeacherDashboard() {
             <WeeklyCalendar
               slots={teacherClasses}
               onSelectSlot={(slot) => setSelectedClass(slot)}
-              startHour={8}
-              endHour={18}
+              startHour={settings?.defaultStartHour ?? 8}
+              endHour={settings?.defaultEndHour ?? 19}
             />
           ) : (
             <div className="text-center py-12 text-muted-foreground">

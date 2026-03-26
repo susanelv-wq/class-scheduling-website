@@ -8,12 +8,14 @@ import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { ClassDetailsModal } from "@/components/student/class-details-modal"
 import { useAuth } from "@/lib/auth-context"
 import { bookingsApi, classesApi, type Class } from "@/lib/api"
+import { useAppSettings } from "@/lib/use-app-settings"
 
 export default function StudentDashboard() {
   const [classes, setClasses] = useState<Class[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSlot, setSelectedSlot] = useState<any>(null)
   const { user, isAuthenticated, loading: authLoading } = useAuth()
+  const { settings } = useAppSettings()
   const router = useRouter()
 
   useEffect(() => {
@@ -95,7 +97,12 @@ export default function StudentDashboard() {
 
         <Card className="p-6">
           {timeSlots.length > 0 ? (
-            <WeeklyCalendar slots={timeSlots} onSelectSlot={handleSelectSlot} startHour={8} endHour={18} />
+            <WeeklyCalendar
+              slots={timeSlots}
+              onSelectSlot={handleSelectSlot}
+              startHour={settings?.defaultStartHour ?? 8}
+              endHour={settings?.defaultEndHour ?? 19}
+            />
           ) : (
             <div className="text-center py-12 text-muted-foreground">
               <p>No classes available at the moment.</p>
