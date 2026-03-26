@@ -11,7 +11,7 @@ interface TimeSlot {
   endTime: string // "HH:MM" format
   date: string // "YYYY-MM-DD" format
   details?: Record<string, any>
-  color?: "primary" | "accent" | "destructive" | "green" | "success"
+  color?: "primary" | "accent" | "destructive" | "green" | "success" | "warning" | "neutral"
   onSelect?: (slot: TimeSlot) => void
 }
 
@@ -98,6 +98,10 @@ export function WeeklyCalendar({
     switch (color) {
       case "accent":
         return "bg-accent/20 border-accent text-accent-foreground"
+      case "warning":
+        return "bg-yellow-500/80 border-yellow-600 text-white"
+      case "neutral":
+        return "bg-muted border-muted-foreground/40 text-foreground"
       case "success":
         return "bg-green-500/80 border-green-600 text-white"
       case "destructive":

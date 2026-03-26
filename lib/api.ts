@@ -223,6 +223,12 @@ const ensureAuthenticatedUser = async (): Promise<UserRow> => {
   return fetchUserProfile(authUser.id)
 }
 
+const getPaymentWindowMinutes = async (): Promise<number> => {
+  const { data } = await supabase.from("app_settings").select("paymentWindowMinutes").eq("id", 1).single()
+  const minutes = Number((data as any)?.paymentWindowMinutes)
+  return Number.isFinite(minutes) ? Math.max(0, Math.min(1440, minutes)) : 120
+}
+
 // Auth API
 export const authApi = {
   login: async (email: string, password: string): Promise<LoginResponse> => {
@@ -507,17 +513,68 @@ export const bookingsApi = {
   create: async (classId: string): Promise<Booking> => {
     ensureSupabaseReady()
     const me = await ensureAuthenticatedUser()
+    const windowMinutes = await getPaymentWindowMinutes()
+    const expiresAt = new Date(Date.now() + windowMinutes * 60_000).toISOString()
+
+    // Prevent overbooking: count CONFIRMED + non-expired PENDING holds.
+    const { data: cls, error: classErr } = await supabase.from("classes").select("id,capacity,price").eq("id", classId).single()
+    if (classErr || !cls) throw new Error(classErr?.message || "Class not found")
+
+    const { data: activeBookings, error: activeErr } = await supabase
+      .from("bookings")
+      .select("id,status,expiresAt")
+      .eq("classId", classId)
+      .in("status", ["CONFIRMED", "PENDING"])
+
+    if (activeErr) throw new Error(activeErr.message)
+
+    const now = Date.now()
+    const activeCount = (activeBookings || []).filter((b: any) => {
+      if (b.status === "CONFIRMED") return true
+      if (b.status !== "PENDING") return false
+      if (!b.expiresAt) return true
+      const t = Date.parse(b.expiresAt)
+      return Number.isFinite(t) ? t > now : true
+    }).length
+
+    const capacity = Number((cls as any).capacity) || 0
+    if (capacity > 0 && activeCount >= capacity) {
+      throw new Error("Class is full")
+    }
+
     const { data, error } = await supabase
       .from("bookings")
       .insert({
         classId,
         studentId: me.id,
         status: "PENDING" as BookingStatus,
+        expiresAt,
       })
       .select("*")
       .single()
 
     if (error || !data) throw new Error(error?.message || "Failed to create booking")
+
+    // Create a pending payment row for this booking (fake provider step will mark as COMPLETED).
+    const bookingId = (data as BookingRow).id
+    const amount = Number((cls as any).price) || 0
+    await supabase
+      .from("payments")
+      .upsert(
+        {
+          bookingId,
+          userId: me.id,
+          amount,
+          status: "PENDING" as PaymentStatus,
+          paymentMethod: null,
+          transactionId: null,
+          paidAt: null,
+        },
+        { onConflict: "bookingId" }
+      )
+      .select("id")
+      .single()
+
     return bookingsApi.getById((data as BookingRow).id)
   },
 

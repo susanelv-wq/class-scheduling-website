@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card"
 import { WeeklyCalendar } from "@/components/ui/weekly-calendar"
 import { ClassDetailsModal } from "@/components/student/class-details-modal"
 import { useAuth } from "@/lib/auth-context"
-import { bookingsApi, classesApi, type Class } from "@/lib/api"
+import { bookingsApi, classesApi, type Booking, type Class } from "@/lib/api"
 import { useAppSettings } from "@/lib/use-app-settings"
 
 export default function StudentDashboard() {
@@ -31,8 +31,30 @@ export default function StudentDashboard() {
         const data = await classesApi.getAll()
         if (user?.id) {
           const myBookings = await bookingsApi.getAll({ studentId: user.id })
-          const myClassIds = new Set(myBookings.map((b) => b.class?.id))
-          setClasses(data.map((c: any) => ({ ...c, alreadyBooked: myClassIds.has(c.id) })))
+          const byClassId = new Map<string, Booking>()
+          for (const b of myBookings) {
+            const cid = b.class?.id
+            if (!cid) continue
+            // Prefer CONFIRMED over PENDING over CANCELLED
+            const prev = byClassId.get(cid)
+            if (!prev) {
+              byClassId.set(cid, b)
+              continue
+            }
+            const rank = (x: Booking) => (x.status === "CONFIRMED" ? 3 : x.status === "PENDING" ? 2 : 1)
+            if (rank(b) > rank(prev)) byClassId.set(cid, b)
+          }
+
+          setClasses(
+            data.map((c: any) => {
+              const b = byClassId.get(c.id)
+              return {
+                ...c,
+                myBookingStatus: b?.status || null,
+                myBookingExpiresAt: b?.expiresAt || null,
+              }
+            }),
+          )
         } else {
           setClasses(data)
         }
@@ -65,12 +87,14 @@ export default function StudentDashboard() {
       enrolled: cls.enrolled || 0,
       description: cls.description || "",
     },
-    alreadyBooked: (cls as any).alreadyBooked,
-    color: (cls as any).alreadyBooked
-      ? "success"          // green = already booked by this student
-      : (cls.enrolled || 0) >= cls.capacity
-      ? "destructive"      // red = full
-      : "primary",         // teal = available
+    myBookingStatus: (cls as any).myBookingStatus,
+    myBookingExpiresAt: (cls as any).myBookingExpiresAt,
+    color:
+      (cls as any).myBookingStatus === "PENDING"
+        ? "warning" // yellow = pending payment (held)
+        : (cls as any).myBookingStatus === "CONFIRMED" || (cls.enrolled || 0) >= cls.capacity
+        ? "neutral" // gray = confirmed or full
+        : "success", // green = available
   }))
 
   const handleSelectSlot = (slot: any) => {
@@ -137,7 +161,7 @@ export default function StudentDashboard() {
             capacity: selectedSlot.details.capacity,
             enrolled: selectedSlot.details.enrolled,
             description: selectedSlot.details.description,
-            alreadyBooked: selectedSlot.alreadyBooked ?? false,
+            alreadyBooked: selectedSlot.myBookingStatus === "CONFIRMED",
           }}
           onClose={() => setSelectedSlot(null)}
         />

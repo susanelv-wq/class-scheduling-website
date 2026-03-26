@@ -1,16 +1,19 @@
 "use client"
 
-import type React from "react"
-
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { AlertCircle, CheckCircle2, Clock, CreditCard } from "lucide-react"
 import { formatRupiah } from "@/lib/currency"
+import { bookingsApi, paymentsApi } from "@/lib/api"
 
 interface BookingPaymentFlowProps {
+  booking: {
+    id: string
+    expiresAt?: string | null
+  }
   class: {
-    id: number
+    id: string
     title: string
     teacher: string
     subject: string
@@ -24,52 +27,73 @@ interface BookingPaymentFlowProps {
     description: string
   }
   onComplete: () => void
+  onExpired?: () => void
 }
 
-export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlowProps) {
-  const [step, setStep] = useState<"booking" | "payment" | "confirmed">("booking")
-  const [bookingData, setBookingData] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-  })
-  const [paymentData, setPaymentData] = useState({
-    cardNumber: "",
-    expiryDate: "",
-    cvv: "",
-    cardholderName: "",
-  })
-  const [timeoutMinutes, setTimeoutMinutes] = useState(120)
+export function BookingPaymentFlow({ class: cls, booking, onComplete, onExpired }: BookingPaymentFlowProps) {
+  const [step, setStep] = useState<"payment" | "confirmed" | "expired">("payment")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
-  const handleBooking = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (bookingData.fullName && bookingData.email && bookingData.phone) {
-      setStep("payment")
-      // Start 2-hour countdown
-      const countdown = setInterval(() => {
-        setTimeoutMinutes((prev) => {
-          if (prev <= 1) {
-            clearInterval(countdown)
-            setStep("booking") // Reset on timeout
-            return 120
-          }
-          return prev - 1
-        })
-      }, 60000)
+  const expiresAtMs = useMemo(() => {
+    if (!booking.expiresAt) return null
+    const t = Date.parse(booking.expiresAt)
+    return Number.isFinite(t) ? t : null
+  }, [booking.expiresAt])
+
+  const remainingMs = useMemo(() => {
+    if (!expiresAtMs) return null
+    return Math.max(0, expiresAtMs - now)
+  }, [expiresAtMs, now])
+
+  useEffect(() => {
+    if (!expiresAtMs) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [expiresAtMs])
+
+  useEffect(() => {
+    if (step !== "payment") return
+    if (remainingMs === null) return
+    if (remainingMs <= 0) {
+      setStep("expired")
+      onExpired?.()
     }
+  }, [remainingMs, step, onExpired])
+
+  const formatTime = (ms: number) => {
+    const totalSeconds = Math.ceil(ms / 1000)
+    const mins = Math.floor(totalSeconds / 60)
+    const secs = totalSeconds % 60
+    return `${mins}:${String(secs).padStart(2, "0")}`
   }
 
-  const handlePayment = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (paymentData.cardNumber && paymentData.expiryDate && paymentData.cvv && paymentData.cardholderName) {
+  const handleSimulatePay = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await paymentsApi.create(booking.id, "FAKE", `fake-${Date.now()}`)
       setStep("confirmed")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Payment failed")
+    } finally {
+      setBusy(false)
     }
   }
 
-  const formatTime = (minutes: number) => {
-    const hours = Math.floor(minutes / 60)
-    const mins = minutes % 60
-    return `${hours}h ${mins}m`
+  const handleCancel = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await bookingsApi.cancel(booking.id)
+      setStep("expired")
+      onExpired?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to cancel reservation")
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -77,13 +101,7 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
       {/* Progress Indicator */}
       <div className="flex items-center justify-between">
         <div className="flex-1">
-          <div
-            className={`p-3 rounded-lg font-medium text-center transition-all ${
-              step === "booking" || step === "payment" || step === "confirmed"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
+          <div className="p-3 rounded-lg font-medium text-center transition-all bg-primary text-primary-foreground">
             Booking
           </div>
         </div>
@@ -91,10 +109,10 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
         <div className="flex-1">
           <div
             className={`p-3 rounded-lg font-medium text-center transition-all ${
-              step === "payment" || step === "confirmed"
-                ? step === "confirmed"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-accent text-accent-foreground"
+              step === "payment"
+                ? "bg-accent text-accent-foreground"
+                : step === "confirmed"
+                ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground"
             }`}
           >
@@ -113,79 +131,13 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
         </div>
       </div>
 
-      {/* Booking Step */}
-      {step === "booking" && (
-        <form onSubmit={handleBooking} className="space-y-4">
-          <div className="bg-secondary/50 rounded-lg p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm text-foreground font-medium">
-              <Clock className="w-4 h-4 text-accent" />
-              <span>Expires in: {formatTime(timeoutMinutes)}</span>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-foreground block mb-2">Full Name *</label>
-              <input
-                type="text"
-                required
-                placeholder="John Doe"
-                value={bookingData.fullName}
-                onChange={(e) => setBookingData({ ...bookingData, fullName: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-foreground block mb-2">Email *</label>
-              <input
-                type="email"
-                required
-                placeholder="john@example.com"
-                value={bookingData.email}
-                onChange={(e) => setBookingData({ ...bookingData, email: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-foreground block mb-2">Phone Number *</label>
-              <input
-                type="tel"
-                required
-                placeholder="+1 (555) 000-0000"
-                value={bookingData.phone}
-                onChange={(e) => setBookingData({ ...bookingData, phone: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
-
-          <div className="bg-secondary/30 rounded-lg p-3 border border-border">
-            <p className="text-xs text-muted-foreground">
-              <strong>Note:</strong> You have 2 hours to complete payment after booking confirmation. If not completed
-              within this time, your reservation will be automatically cancelled and the booking released.
-            </p>
-          </div>
-
-          <div className="flex gap-3">
-            <Button type="button" variant="ghost" className="flex-1">
-              Cancel
-            </Button>
-            <Button type="submit" className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground">
-              Continue to Payment
-            </Button>
-          </div>
-        </form>
-      )}
-
       {/* Payment Step */}
       {step === "payment" && (
-        <form onSubmit={handlePayment} className="space-y-4">
+        <div className="space-y-4">
           <div className="bg-secondary/50 rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm text-foreground font-medium">
               <Clock className="w-4 h-4 text-accent" />
-              <span>Time remaining: {formatTime(timeoutMinutes)}</span>
+              <span>Time remaining: {remainingMs === null ? "—" : formatTime(remainingMs)}</span>
             </div>
           </div>
 
@@ -207,77 +159,22 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             </div>
           </Card>
 
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-foreground block mb-2">Cardholder Name *</label>
-              <input
-                type="text"
-                required
-                placeholder="As shown on card"
-                value={paymentData.cardholderName}
-                onChange={(e) => setPaymentData({ ...paymentData, cardholderName: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-              />
+          {error && (
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-sm text-destructive">
+              {error}
             </div>
-
-            <div>
-              <label className="text-sm font-medium text-foreground block mb-2">Card Number *</label>
-              <input
-                type="text"
-                required
-                placeholder="1234 5678 9012 3456"
-                maxLength={19}
-                value={paymentData.cardNumber}
-                onChange={(e) => setPaymentData({ ...paymentData, cardNumber: e.target.value })}
-                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium text-foreground block mb-2">Expiry Date *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="MM/YY"
-                  maxLength={5}
-                  value={paymentData.expiryDate}
-                  onChange={(e) => setPaymentData({ ...paymentData, expiryDate: e.target.value })}
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-foreground block mb-2">CVV *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="123"
-                  maxLength={4}
-                  value={paymentData.cvv}
-                  onChange={(e) => setPaymentData({ ...paymentData, cvv: e.target.value })}
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-secondary/30 rounded-lg p-3 border border-border text-xs text-muted-foreground">
-            <p>
-              <strong>Security:</strong> Your payment information is encrypted and secure. We use industry-standard
-              PCI-DSS compliance.
-            </p>
-          </div>
+          )}
 
           <div className="flex gap-3">
-            <Button type="button" variant="ghost" onClick={() => setStep("booking")} className="flex-1">
-              Back
+            <Button type="button" variant="outline" onClick={handleCancel} disabled={busy} className="flex-1">
+              Cancel reservation
             </Button>
-            <Button type="submit" className="flex-1 bg-accent hover:bg-accent/90 text-accent-foreground">
+            <Button type="button" onClick={handleSimulatePay} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 text-accent-foreground">
               <CreditCard className="w-4 h-4 mr-2" />
-              Pay {formatRupiah(cls.price)}
+              {busy ? "Processing…" : "Simulate payment success"}
             </Button>
           </div>
-        </form>
+        </div>
       )}
 
       {/* Confirmation Step */}
@@ -313,21 +210,23 @@ export function BookingPaymentFlow({ class: cls, onComplete }: BookingPaymentFlo
             </div>
           </Card>
 
-          <div className="bg-secondary/50 rounded-lg p-4 border border-border">
-            <div className="flex gap-3 items-start">
-              <AlertCircle className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
-              <div className="text-left text-sm">
-                <p className="font-medium text-foreground mb-1">What happens next?</p>
-                <p className="text-muted-foreground text-xs leading-relaxed">
-                  A confirmation email has been sent to {bookingData.email}. Please check your email for booking details
-                  and further instructions.
-                </p>
-              </div>
-            </div>
-          </div>
-
           <Button onClick={onComplete} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
             Back to Available Classes
+          </Button>
+        </div>
+      )}
+
+      {step === "expired" && (
+        <div className="text-center space-y-4 py-6">
+          <div className="flex justify-center">
+            <AlertCircle className="w-12 h-12 text-muted-foreground" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-foreground mb-1">Reservation expired</h3>
+            <p className="text-sm text-muted-foreground">This spot has been released. Please try booking again.</p>
+          </div>
+          <Button onClick={onComplete} className="w-full">
+            Close
           </Button>
         </div>
       )}

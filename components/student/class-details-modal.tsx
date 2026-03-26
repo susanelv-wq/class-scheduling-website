@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { X, Clock, MapPin, Users, CheckCircle } from "lucide-react"
 import { bookingsApi } from "@/lib/api"
 import { formatRupiah } from "@/lib/currency"
+import { BookingPaymentFlow } from "@/components/student/booking-payment-flow"
 
 interface ClassDetailsModalProps {
   class: {
@@ -27,18 +28,18 @@ interface ClassDetailsModalProps {
 }
 
 export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProps) {
-  const [isBooked, setIsBooked] = useState(false)
   const [showBookingForm, setShowBookingForm] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [bookingError, setBookingError] = useState<string | null>(null)
+  const [booking, setBooking] = useState<{ id: string; expiresAt?: string | null } | null>(null)
   const spotsLeft = cls.capacity - cls.enrolled
 
   const handleConfirmBooking = async () => {
     setIsLoading(true)
     setBookingError(null)
     try {
-      await bookingsApi.create(cls.id)
-      setIsBooked(true)
+      const b = await bookingsApi.create(cls.id)
+      setBooking({ id: b.id, expiresAt: b.expiresAt })
     } catch (err: any) {
       setBookingError(err?.message || "Failed to create booking. Please try again.")
     } finally {
@@ -127,7 +128,7 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
                   Close
                 </Button>
               </div>
-            ) : !isBooked ? (
+            ) : !booking ? (
               <div className="border-t border-border pt-6 space-y-4">
                 <div className="flex items-baseline justify-between">
                   <span className="text-muted-foreground">Price per class:</span>
@@ -153,23 +154,23 @@ export function ClassDetailsModal({ class: cls, onClose }: ClassDetailsModalProp
                 </div>
               </div>
             ) : (
-              <div className="border-t border-border pt-6 space-y-4 text-center">
-                <div className="flex justify-center">
-                  <CheckCircle className="w-12 h-12 text-green-500" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-foreground mb-1">Booking Confirmed!</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Please proceed to payment. You have 2 hours to complete the payment.
-                  </p>
-                </div>
-                <Button onClick={onClose} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
-                  Got it
-                </Button>
+              <div className="border-t border-border pt-6">
+                <BookingPaymentFlow
+                  booking={booking}
+                  class={cls}
+                  onExpired={() => {
+                    setBooking(null)
+                    setShowBookingForm(false)
+                  }}
+                  onComplete={() => {
+                    onClose()
+                    if (typeof window !== "undefined") window.location.reload()
+                  }}
+                />
               </div>
             )}
 
-            {showBookingForm && !isBooked && !cls.alreadyBooked && (
+            {showBookingForm && !booking && !cls.alreadyBooked && (
               <div className="border-t border-border pt-6 space-y-4 bg-secondary/30 rounded-lg p-4">
                 <h3 className="font-semibold text-foreground">Booking Information</h3>
                 <div className="space-y-3">

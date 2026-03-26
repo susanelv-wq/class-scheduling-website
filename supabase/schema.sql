@@ -1,5 +1,6 @@
 -- Run this in Supabase SQL Editor
 create extension if not exists pgcrypto;
+create extension if not exists pg_cron;
 
 do $$
 begin
@@ -101,6 +102,46 @@ alter table public.users enable row level security;
 alter table public.classes enable row level security;
 alter table public.bookings enable row level security;
 alter table public.payments enable row level security;
+
+-- Auto-cancel expired pending bookings (holds)
+create or replace function public.cancel_expired_bookings()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  affected integer := 0;
+begin
+  update public.bookings
+  set status = 'CANCELLED'
+  where status = 'PENDING'
+    and "expiresAt" is not null
+    and "expiresAt" < now();
+
+  get diagnostics affected = row_count;
+  return affected;
+end;
+$$;
+
+revoke all on function public.cancel_expired_bookings() from public;
+grant execute on function public.cancel_expired_bookings() to authenticated;
+
+do $$
+begin
+  -- Schedule every minute (idempotent)
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule('cancel-expired-bookings');
+    perform cron.schedule('cancel-expired-bookings', '* * * * *', $$select public.cancel_expired_bookings();$$);
+  end if;
+exception
+  when undefined_function then
+    -- pg_cron not available in this project; schedule in Supabase Dashboard instead.
+    null;
+  when others then
+    -- If scheduling fails for permission reasons, you can still schedule via Dashboard.
+    null;
+end $$;
 
 -- Global app settings (single-row table)
 create table if not exists public.app_settings (

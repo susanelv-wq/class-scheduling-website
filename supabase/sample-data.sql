@@ -96,30 +96,61 @@ begin
   create temporary table tmp_bookings (
     id uuid primary key,
     class_id uuid,
-    status booking_status
+    status booking_status,
+    expires_at timestamptz,
+    pay_status payment_status
   ) on commit drop;
 
-  insert into tmp_bookings (id, class_id, status)
-  select gen_random_uuid(), id, 'CONFIRMED'::booking_status from tmp_classes;
+  -- Mix statuses to demonstrate calendar colors:
+  -- - CONFIRMED (paid) should look booked (gray)
+  -- - PENDING (not expired) should look in-payment (yellow)
+  -- - PENDING (expired) should be auto-cancelled by cancel_expired_bookings() and become available again (green)
+  insert into tmp_bookings (id, class_id, status, expires_at, pay_status)
+  select
+    gen_random_uuid(),
+    id,
+    case
+      when extract(month from d) = 3 and extract(day from d) = 7 then 'PENDING'::booking_status
+      when extract(month from d) = 3 and extract(day from d) = 21 then 'PENDING'::booking_status
+      else 'CONFIRMED'::booking_status
+    end,
+    case
+      when extract(month from d) = 3 and extract(day from d) = 7 then now() + interval '90 minutes'
+      when extract(month from d) = 3 and extract(day from d) = 21 then now() - interval '30 minutes'
+      else null
+    end,
+    case
+      when extract(month from d) = 3 and extract(day from d) in (7, 21) then 'PENDING'::payment_status
+      else 'COMPLETED'::payment_status
+    end
+  from tmp_classes;
 
   for b in select * from tmp_bookings loop
     if use_student_id and use_class_id then
-      insert into public.bookings (id, status, "studentId", "classId")
-      values (b.id, b.status, v_student, b.class_id)
+      insert into public.bookings (id, status, "expiresAt", "studentId", "classId")
+      values (b.id, b.status, b.expires_at, v_student, b.class_id)
       on conflict do nothing;
     else
       -- snake_case fallback
       execute format(
-        'insert into public.bookings (id, status, %s, %s) values (%L, %L, %L, %L) on conflict do nothing',
+        'insert into public.bookings (id, status, "expiresAt", %s, %s) values (%L, %L, %L, %L, %L) on conflict do nothing',
         case when use_student_id_snake then 'student_id' else '"studentId"' end,
         case when use_class_id_snake then 'class_id' else '"classId"' end,
-        b.id, b.status::text, v_student, b.class_id
+        b.id, b.status::text, b.expires_at, v_student, b.class_id
       );
     end if;
 
-    -- payment per booking (completed)
+    -- payment per booking (PENDING/COMPLETED)
     insert into public.payments (id, amount, status, "paymentMethod", "transactionId", "paidAt", "userId", "bookingId")
-    select gen_random_uuid(), c.price, 'COMPLETED'::payment_status, 'seed', 'seed-' || b.id::text, now(), v_student, b.id
+    select
+      gen_random_uuid(),
+      c.price,
+      b.pay_status,
+      case when b.pay_status = 'COMPLETED' then 'seed' else null end,
+      case when b.pay_status = 'COMPLETED' then 'seed-' || b.id::text else null end,
+      case when b.pay_status = 'COMPLETED' then now() else null end,
+      v_student,
+      b.id
     from tmp_classes c
     where c.id = b.class_id
     on conflict do nothing;
